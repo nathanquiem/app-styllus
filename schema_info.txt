@@ -1,0 +1,63 @@
+Profiles Query:
+[{"id":"f19e36d7-153f-464c-ab96-1af4c1251953","full_name":"naelquiem","phone":"","email":"naelquiem@hotmail.com","role":"admin","empresa_id":"00000000-0000-0000-0000-000000000000","created_at":"2026-03-10T22:30:53.10196+00:00","updated_at":"2026-03-10T22:30:53.10196+00:00"}]
+Error: null
+
+Services Query:
+[
+  {
+    "id": "0ac88c24-3807-474d-8cf5-9f1c8297d05f",
+    "name": "Corte Degradê",
+    "price": 55,
+    "duration_minutes": 30,
+    "image_url": "https://gnjcdjhvekshzkwvwfdb.supabase.co/storage/v1/object/public/services/44stxr8hzyv.jpg",
+    "empresa_id": "00000000-0000-0000-0000-000000000000",
+    "created_at": "2026-03-10T23:48:05.96941+00:00",
+    "updated_at": "2026-03-10T23:48:05.96941+00:00"
+  },
+  {
+    "id": "bb37c978-5d8a-4a76-8593-f15ba86dfbe4",
+    "name": "Corte Simples",
+    "price": 45,
+    "duration_minutes": 30,
+    "image_url": "https://gnjcdjhvekshzkwvwfdb.supabase.co/storage/v1/object/public/services/yx29bqbqapf.jpg",
+    "empresa_id": "00000000-0000-0000-0000-000000000000",
+    "created_at": "2026-03-10T23:48:44.692009+00:00",
+    "updated_at": "2026-03-10T23:48:44.692009+00:00"
+  },
+  {
+    "id": "4429ee9d-d9a5-42bb-9f79-48357b9b77c3",
+    "name": "Barboterapia",
+    "price": 45,
+    "duration_minutes": 30,
+    "image_url": "https://gnjcdjhvekshzkwvwfdb.supabase.co/storage/v1/object/public/services/p0pzy854sch.jpg",
+    "empresa_id": "00000000-0000-0000-0000-000000000000",
+    "created_at": "2026-03-10T23:49:13.430836+00:00",
+    "updated_at": "2026-03-10T23:49:13.430836+00:00"
+  },
+  {
+    "id": "7d3869a7-5f24-4fdc-aeab-71b64b7d08bb",
+    "name": "Corte + Barba",
+    "price": 95,
+    "duration_minutes": 60,
+    "image_url": "https://gnjcdjhvekshzkwvwfdb.supabase.co/storage/v1/object/public/services/h6xlwyh1cw7.jpg",
+    "empresa_id": "00000000-0000-0000-0000-000000000000",
+    "created_at": "2026-03-10T23:49:37.901393+00:00",
+    "updated_at": "2026-03-10T23:49:37.901393+00:00"
+  },
+  {
+    "id": "7f2bd6b7-c6e2-47b1-af09-041152c265ed",
+    "name": "Corte Navalha",
+    "price": 60,
+    "duration_minutes": 45,
+    "image_url": "https://gnjcdjhvekshzkwvwfdb.supabase.co/storage/v1/object/public/services/dye19rbkbqq.jpg",
+    "empresa_id": "00000000-0000-0000-0000-000000000000",
+    "created_at": "2026-03-10T23:49:56.43724+00:00",
+    "updated_at": "2026-03-10T23:49:56.43724+00:00"
+  }
+]
+Error: null
+
+Bookings Query:
+[]
+Error: null
+

@@ -1,0 +1,40 @@
+﻿Ôû▓ Next.js 16.1.6 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+Ô£ô Compiled successfully in 6.9s
+  Running TypeScript ...
+node.exe : Failed to compile.
+No linha:1 caractere:1
++ & "C:\Program Files\nodejs/node.exe" 
+"C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: 
+(Fai    led to compile.:String) [], 
+RemoteException
+    + FullyQualifiedErrorId : 
+NativeCommandError
+ 
+
+./src/app/admin/page.tsx:721:47
+Type error: Parameter 'b' implicitly has an 
+'any' type.
+
+[0m [90m 719 |[39m
+ [90m 720 |[39m       [90m// Split into 
+current and comparison periods[39m
+[31m[1m>[22m[39m[90m 721 |[39m       
+[36mconst[39m currentBookings [33m=[39m 
+bookings[33m.[39mfilter(b [33m=>[39m {
+ [90m     |[39m                            
+                   [31m[1m^[22m[39m
+ [90m 722 |[39m         [36mconst[39m d 
+[33m=[39m parseISO(b[33m.[39mstart_time)
+ [90m 723 |[39m         [36mreturn[39m 
+isWithinInterval(d[33m,[39m { 
+start[33m:[39m rangeStart[33m,[39m 
+end[33m:[39m rangeEnd })
+ [90m 724 |[39m       })[0m
+Next.js build worker exited with code: 1 and 
+signal: null
