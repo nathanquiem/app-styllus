@@ -74,7 +74,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               phone: u.user_metadata?.phone || null,
               email: u.email || null,
               role: 'client' as const,
-              empresa_id: '00000000-0000-0000-0000-000000000000',
+              empresa_id: 'a3f8c1d2-e7b4-4a92-b5f0-9d2e6c8a1f3b',
             }
             const { error: insertErr } = await supabase
               .from('profiles')

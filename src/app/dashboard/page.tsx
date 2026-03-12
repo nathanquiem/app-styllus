@@ -5,7 +5,8 @@ import { createClient } from '@/lib/supabase-browser'
 import { useAuthStore } from '@/store/authStore'
 import { Button } from '@/components/ui/Button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card'
-import { LogOut, Plus, Clock, CalendarDays, Ban, X, Settings } from 'lucide-react'
+import { LogOut, Plus, Clock, CalendarDays, Ban, X, Settings, Shield, User as UserIcon } from 'lucide-react'
+import { formatPhone, maskPhoneInput } from '@/lib/formatPhone'
 import { format, isAfter, subHours, parseISO } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import { useRouter } from 'next/navigation'
@@ -68,7 +69,8 @@ export default function DashboardPage() {
           .from('bookings')
           .select(`
             *,
-            services (name, duration_minutes, price)
+            services (name, duration_minutes, price),
+            barbers (name)
           `)
           .eq('client_id', user.id)
           .order('start_time', { ascending: true })
@@ -139,7 +141,17 @@ export default function DashboardPage() {
           <h1 className="text-xl font-bold text-white">Olá, {profile?.full_name?.split(' ')[0]}</h1>
           <p className="text-sm text-zinc-400">Gerencie seus horários</p>
         </div>
-        <div className="flex gap-4">
+        <div className="flex gap-2 sm:gap-4">
+          {profile?.role === 'admin' && (
+            <Button 
+              variant="outline" 
+              className="flex items-center gap-2 border-red-500/30 text-red-400 hover:bg-red-500/10"
+              onClick={() => router.push('/admin')}
+            >
+              <Shield className="w-4 h-4" />
+              <span className="hidden sm:inline">Painel</span>
+            </Button>
+          )}
           <Button 
             variant="outline" 
             className="flex items-center gap-2"
@@ -184,10 +196,17 @@ export default function DashboardPage() {
                   <CardHeader className="pb-3">
                     <CardTitle className="flex justify-between items-start">
                       <span>{booking.services?.name}</span>
-                      <span className="text-red-500 font-bold">R$ {booking.services?.price}</span>
+                      <span className="text-emerald-500 font-bold">R$ {booking.services?.price}</span>
                     </CardTitle>
-                    <CardDescription className="flex items-center gap-2">
-                      <Clock className="w-4 h-4" /> {booking.services?.duration_minutes} minutos
+                    <CardDescription className="flex items-center gap-4">
+                      <span className="flex items-center gap-2">
+                        <Clock className="w-4 h-4" /> {booking.services?.duration_minutes} minutos
+                      </span>
+                      {booking.barbers?.name && (
+                        <span className="flex items-center gap-2">
+                          <UserIcon className="w-4 h-4" /> {booking.barbers.name}
+                        </span>
+                      )}
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
@@ -256,7 +275,7 @@ export default function DashboardPage() {
         onClose={() => setIsBookingModalOpen(false)} 
         onSuccess={() => window.location.reload()} 
         userId={user.id}
-        empresaId={profile?.empresa_id || "00000000-0000-0000-0000-000000000000"} 
+        empresaId={profile?.empresa_id || "a3f8c1d2-e7b4-4a92-b5f0-9d2e6c8a1f3b"} 
       />
 
       {isSettingsOpen && (
@@ -283,7 +302,7 @@ export default function DashboardPage() {
                   type="text" 
                   className="w-full mt-1.5 bg-zinc-900 border border-zinc-800 rounded-lg p-2.5 text-white focus:outline-none focus:border-red-500 transition-colors"
                   value={editPhone}
-                  onChange={e => setEditPhone(e.target.value)}
+                  onChange={e => setEditPhone(maskPhoneInput(e.target.value))}
                   placeholder="(00) 00000-0000"
                 />
               </div>

@@ -12,9 +12,11 @@ import { format, parseISO, isAfter, subHours, startOfDay, endOfDay, startOfWeek,
 import { ptBR } from 'date-fns/locale'
 import { useRouter } from 'next/navigation'
 import { BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, LineChart, Line, CartesianGrid, Area, AreaChart } from 'recharts'
+import { formatPhone } from '@/lib/formatPhone'
 
 export default function PainelStyllus() {
   const { user, profile, logout } = useAuthStore()
+  const { isLoading: authLoading } = useAuthStore()
   const [activeTab, setActiveTab] = useState<'agenda' | 'quick' | 'services' | 'barbers' | 'config' | 'metrics' | 'clients' | 'whatsapp'>('agenda')
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [supabase] = useState(() => createClient())
@@ -44,7 +46,6 @@ export default function PainelStyllus() {
   const [occupiedSlots, setOccupiedSlots] = useState<string[]>([])
 
   // --- SERVICES STATE ---
-  // Initial DB reads (using mock data originally, now using supabase)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [services, setServices] = useState<any[]>([])
   const [isCreatingService, setIsCreatingService] = useState(false)
@@ -81,6 +82,8 @@ export default function PainelStyllus() {
   // --- CONFIG STATE ---
   const [config, setConfig] = useState<any>({ open_time: '09:00', close_time: '19:00', open_days: [1,2,3,4,5,6] })
   const [isSavingConfig, setIsSavingConfig] = useState(false)
+
+  // --- METRICS STATE ---
 
   // Initialization
   useEffect(() => {
@@ -178,7 +181,8 @@ export default function PainelStyllus() {
         .select(`
           *,
           services (name, price, duration_minutes),
-          profiles:client_id (id, full_name, created_at, phone)
+          profiles:client_id (id, full_name, created_at, phone),
+          barbers (name)
         `, { count: 'exact' })
         .gte('start_time', startStr)
         .lte('start_time', endStr)
@@ -300,7 +304,7 @@ export default function PainelStyllus() {
         duration_minutes: parseInt(serviceForm.duration, 10),
         description: serviceForm.description,
         image_url: imageUrl,
-        empresa_id: profile?.empresa_id || "00000000-0000-0000-0000-000000000000"
+        empresa_id: profile?.empresa_id || "a3f8c1d2-e7b4-4a92-b5f0-9d2e6c8a1f3b"
       }
 
       if (editingServiceId) {
@@ -377,7 +381,7 @@ export default function PainelStyllus() {
         name: barberForm.name, 
         active: barberForm.active,
         photo_url: imageUrl,
-        empresa_id: profile?.empresa_id || "00000000-0000-0000-0000-000000000000"
+        empresa_id: profile?.empresa_id || "a3f8c1d2-e7b4-4a92-b5f0-9d2e6c8a1f3b"
       }
       
       let barberId = editingBarberId
@@ -430,7 +434,13 @@ export default function PainelStyllus() {
 
   // --- CONFIG LOGIC ---
   const fetchConfig = async () => {
-    const { data } = await supabase.from('business_config').select('*').limit(1).single()
+    const empresaId = profile?.empresa_id || "a3f8c1d2-e7b4-4a92-b5f0-9d2e6c8a1f3b"
+    const { data } = await supabase
+      .from('business_config')
+      .select('*')
+      .eq('empresa_id', empresaId)
+      .limit(1)
+      .single()
     if (data) setConfig(data)
   }
 
@@ -441,11 +451,12 @@ export default function PainelStyllus() {
         open_time: config.open_time || '09:00',
         close_time: config.close_time || '19:00',
         open_days: config.open_days || [1,2,3,4,5,6],
-        closed_dates: config.closed_dates || []
+        closed_dates: config.closed_dates || [],
+        cancel_limit_hours: config.cancel_limit_hours ?? 2
       }
       
       if (!config.id) {
-        payload.empresa_id = profile?.empresa_id || "00000000-0000-0000-0000-000000000000"
+        payload.empresa_id = profile?.empresa_id || "a3f8c1d2-e7b4-4a92-b5f0-9d2e6c8a1f3b"
         const { data, error } = await supabase.from('business_config').insert(payload).select().single()
         if (error) {
           if (error.message.includes('closed_dates')) {
@@ -597,19 +608,55 @@ export default function PainelStyllus() {
       const [hours, minutes] = quickTime.split(':').map(Number)
       const bookingDate = new Date(year, month - 1, day, hours, minutes)
 
+      // 1. Fetch Service details to calculate end_time and get names for webhook
+      const { data: svcData } = await supabase.from('services').select('name, duration_minutes').eq('id', quickServiceId).single()
+      const duration = svcData?.duration_minutes || 30
+      const serviceName = svcData?.name || 'Serviço'
+      
+      const endTime = new Date(bookingDate.getTime() + duration * 60000)
+
       const payload: any = {
         client_id: user?.id,
         service_id: quickServiceId,
         start_time: bookingDate.toISOString(),
-        empresa_id: profile?.empresa_id || "00000000-0000-0000-0000-000000000000",
+        end_time: endTime.toISOString(),
+        empresa_id: profile?.empresa_id || "a3f8c1d2-e7b4-4a92-b5f0-9d2e6c8a1f3b",
         status: 'confirmed',
         guest_name: quickName,        
         guest_phone: quickPhone || null
       }
       if (quickBarberId) payload.barber_id = quickBarberId
 
-      const { error } = await supabase.from('bookings').insert(payload)
+      const { data: newBooking, error } = await supabase.from('bookings').insert(payload).select().single()
       if (error) throw error
+
+      // 2. Dispatch the WhatsApp Webhook if instance is configured
+      if (config?.evolution_instance_id && quickPhone) {
+        let barberName = 'Barbeiro'
+        if (quickBarberId) {
+          const { data: barbData } = await supabase.from('barbers').select('name').eq('id', quickBarberId).single()
+          if (barbData) barberName = barbData.name
+        }
+
+        const webhookPayload = {
+          event: "novo_agendamento",
+          instanceName: config.evolution_instance_id,
+          apikey_id: config.apikey_id,
+          phone: quickPhone,
+          clientName: quickName,
+          serviceName: serviceName,
+          barberName: barberName,
+          bookingDate: bookingDate.toLocaleDateString('pt-BR'),
+          bookingTime: quickTime
+        }
+
+        // Fire & Forget webhook
+        fetch('https://n8n.mundoai.com.br/webhook/novo-agendamento', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(webhookPayload)
+        }).catch(err => console.error("Erro ao notificar webhook whatsapp:", err))
+      }
 
       alert("Encaixe confirmado com sucesso!")
       setQuickName(''); setQuickPhone(''); setQuickServiceId(''); setQuickBarberId(''); setQuickDate(''); setQuickTime('')
@@ -821,13 +868,29 @@ export default function PainelStyllus() {
   }
 
   // --- WHATSAPP LOGIC ---
+  // Helper: get WhatsApp config directly from DB (avoids race with config state)
+  const getWaConfig = async () => {
+    const empresaId = profile?.empresa_id || "a3f8c1d2-e7b4-4a92-b5f0-9d2e6c8a1f3b"
+    const { data } = await supabase
+      .from('business_config')
+      .select('evolution_instance_id, apikey_id')
+      .eq('empresa_id', empresaId)
+      .limit(1)
+      .single()
+    return data
+  }
+
   const handleWaFetchInstances = async () => {
     setWaLoading('fetch')
     setWaError(null)
     setWaQrCode(null)
     setWaConnectingInstance(null)
     try {
-      const res = await fetch('https://n8n.mundoai.com.br/webhook/instancia')
+      const waConfig = await getWaConfig()
+      const instanceId = waConfig?.evolution_instance_id || waConfig?.apikey_id
+      if (!instanceId) throw new Error('Instância do WhatsApp não configurada. Preencha o campo "evolution_instance_id" nas Configurações.')
+
+      const res = await fetch(`https://n8n.mundoai.com.br/webhook/instancia?instance=${instanceId}&apikey=${waConfig?.apikey_id || ''}`)
       if (!res.ok) throw new Error(`Erro ${res.status}: ${res.statusText}`)
       const payload = await res.json()
       
@@ -861,7 +924,14 @@ export default function PainelStyllus() {
     setWaError(null)
     setWaQrCode(null)
     try {
-      const payload = instanceName ? { instanceName } : {}
+      const waConfig = await getWaConfig()
+      const instanceId = waConfig?.evolution_instance_id || waConfig?.apikey_id
+      if (!instanceId) throw new Error('Instância não configurada.')
+
+      const payload = { 
+        instanceName: instanceId, 
+        apikey_id: waConfig?.apikey_id 
+      }
       const res = await fetch('https://n8n.mundoai.com.br/webhook/conectar', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -880,7 +950,6 @@ export default function PainelStyllus() {
           const src = qrBase64.startsWith('data:') ? qrBase64 : `data:image/png;base64,${qrBase64}`
           setWaQrCode(src)
         } else {
-          // Possibly already connected, refresh instances
           await handleWaFetchInstances()
         }
       }
@@ -898,7 +967,14 @@ export default function PainelStyllus() {
     setWaQrCode(null)
     setWaConnectingInstance(null)
     try {
-      const payload = instanceName ? { instanceName } : {}
+      const waConfig = await getWaConfig()
+      const instanceId = waConfig?.evolution_instance_id || waConfig?.apikey_id
+      if (!instanceId) throw new Error('Instância não configurada.')
+
+      const payload = { 
+        instanceName: instanceId, 
+        apikey_id: waConfig?.apikey_id 
+      }
       const res = await fetch('https://n8n.mundoai.com.br/webhook/desconectar', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -906,7 +982,6 @@ export default function PainelStyllus() {
       })
       if (!res.ok) throw new Error(`Erro ${res.status}: ${res.statusText}`)
       await res.json()
-      // Refresh the instance list to show updated status
       await handleWaFetchInstances()
     } catch (err: any) {
       setWaError(err.message || 'Erro ao desconectar.')
@@ -923,6 +998,22 @@ export default function PainelStyllus() {
     if (diffSec < 60) return `Atualizado há ${diffSec}s`
     const diffMin = Math.floor(diffSec / 60)
     return `Atualizado há ${diffMin}min`
+  }
+
+  // --- METRICS STATE ---
+
+  // Admin route guard
+  useEffect(() => {
+    if (!authLoading && (!user || profile?.role !== 'admin')) {
+      router.push('/')
+    }
+  }, [authLoading, user, profile, router])
+
+  if (authLoading) {
+    return <div className="min-h-screen bg-black flex items-center justify-center text-white">Carregando...</div>
+  }
+  if (!user || profile?.role !== 'admin') {
+    return <div className="min-h-screen bg-black flex items-center justify-center text-white">Acesso negado. Redirecionando...</div>
   }
 
   const NAV_ITEMS = [
@@ -1048,9 +1139,16 @@ export default function PainelStyllus() {
                                   <h4 className="font-bold text-white text-lg">
                                     {booking.guest_name ? booking.guest_name : (booking.profiles?.full_name || 'Desconhecido')}
                                   </h4>
-                                  <p className="text-zinc-400 text-sm flex items-center gap-2">
-                                    <Scissors className="w-3 h-3" /> {booking.services?.name}
-                                  </p>
+                                  <div className="text-zinc-400 text-sm flex flex-col gap-1 mt-1">
+                                    <span className="flex items-center gap-2">
+                                      <Scissors className="w-3 h-3" /> {booking.services?.name}
+                                    </span>
+                                    {booking.barbers?.name && (
+                                      <span className="flex items-center gap-2 text-xs text-zinc-500">
+                                        <UserIcon className="w-3 h-3" /> {booking.barbers.name}
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
                               <div className="flex items-center gap-4 w-full sm:w-auto mt-2 sm:mt-0 justify-between sm:justify-end">
@@ -1074,7 +1172,7 @@ export default function PainelStyllus() {
                                   <div>
                                     <p className="text-xs text-zinc-500 mb-1">Telefone</p>
                                     <p className="text-sm font-medium text-white flex items-center gap-2">
-                                      <Phone className="w-3 h-3 text-zinc-400" /> {booking.guest_phone || booking.profiles?.phone || 'Não informado'}
+                                      <Phone className="w-3 h-3 text-zinc-400" /> {formatPhone(booking.guest_phone || booking.profiles?.phone) || 'Não informado'}
                                     </p>
                                   </div>
                                   <div>
@@ -1140,7 +1238,9 @@ export default function PainelStyllus() {
                           className="flex h-10 w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500"
                         >
                           <option value="">Selecione...</option>
-                          {services.map(s => <option key={s.id} value={s.id}>{s.name} - R$ {s.price}</option>)}
+                          {services
+                            .filter(s => barbersList.some((b: any) => b.active !== false && b.barber_services?.some((bs: any) => bs.service_id === s.id)))
+                            .map(s => <option key={s.id} value={s.id}>{s.name} - R$ {s.price}</option>)}
                         </select>
                       </div>
                       <div className="space-y-2">
@@ -1151,7 +1251,7 @@ export default function PainelStyllus() {
                           className="flex h-10 w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500"
                         >
                           <option value="">Qualquer Barbeiro...</option>
-                          {barbersList.map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                          {barbersList.filter((b: any) => b.active !== false).map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
                         </select>
                       </div>
                     </div>
@@ -1406,6 +1506,21 @@ export default function PainelStyllus() {
                         </div>
                       </div>
 
+                      <div className="flex items-center gap-3 pt-4 border-t border-zinc-800/50">
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input 
+                            type="checkbox" 
+                            className="sr-only peer" 
+                            checked={barberForm.active} 
+                            onChange={e => setBarberForm({...barberForm, active: e.target.checked})}
+                          />
+                          <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                        </label>
+                        <span className={`text-sm font-medium ${barberForm.active ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {barberForm.active ? 'Ativo - Disponível para agendamentos' : 'Inativo - Não aparece para clientes'}
+                        </span>
+                      </div>
+
                       <div className="space-y-3 pt-2">
                         <Label>Serviços Realizados por este profissional</Label>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -1432,7 +1547,7 @@ export default function PainelStyllus() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {barbersList.map((barber: any) => (
-                    <Card key={barber.id} className="border-zinc-800 bg-zinc-950 p-5">
+                    <Card key={barber.id} className={`border-zinc-800 bg-zinc-950 p-5 ${!barber.active ? 'opacity-50' : ''}`}>
                       <div className="flex justify-between items-start">
                         <div className="flex items-center gap-3">
                           {barber.photo_url ? (
@@ -1445,7 +1560,12 @@ export default function PainelStyllus() {
                           )}
                           <div>
                             <h4 className="font-bold text-white text-lg">{barber.name}</h4>
-                            <span className="text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded-full mt-1 inline-block">{barber.barber_services?.length || 0} Serviços atribuidos</span>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className={`text-xs px-2 py-0.5 rounded-full ${barber.active !== false ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
+                                {barber.active !== false ? 'Ativo' : 'Inativo'}
+                              </span>
+                              <span className="text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded-full">{barber.barber_services?.length || 0} Serviços</span>
+                            </div>
                           </div>
                         </div>
                         <div className="flex flex-col gap-2 shrink-0">
@@ -1763,6 +1883,19 @@ export default function PainelStyllus() {
                       </div>
                     </div>
 
+                    <div className="space-y-2 border-t border-zinc-800/50 pt-6">
+                      <Label>Limite para Cancelamento (horas)</Label>
+                      <p className="text-zinc-500 text-xs">Quantas horas antes do horário agendado o cliente ainda pode cancelar.</p>
+                      <Input 
+                        type="number" 
+                        min="0" 
+                        max="48" 
+                        value={config?.cancel_limit_hours ?? 2} 
+                        onChange={e => setConfig({...config, cancel_limit_hours: parseInt(e.target.value) || 0})} 
+                        className="bg-zinc-900 border-zinc-800 w-32" 
+                      />
+                    </div>
+
                     <div className="space-y-3 border-t border-zinc-800/50 pt-6">
                       <Label>Dias de Funcionamento</Label>
                       <div className="flex flex-wrap gap-2">
@@ -1862,7 +1995,7 @@ export default function PainelStyllus() {
                               <p className="text-sm text-zinc-400 mt-1 truncate">{client.email}</p>
                               {client.phone && (
                                 <p className="text-xs text-zinc-500 mt-2 flex items-center gap-1">
-                                  <Phone className="w-3 h-3 text-emerald-500" /> {client.phone}
+                                  <Phone className="w-3 h-3 text-emerald-500" /> {formatPhone(client.phone)}
                                 </p>
                               )}
                               <p className="text-[10px] text-zinc-600 mt-2">

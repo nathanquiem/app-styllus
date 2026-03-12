@@ -6,10 +6,11 @@ import { Footer } from './Footer'
 import { Button } from './ui/Button'
 import { Input } from './ui/Input'
 import { Label } from './ui/Label'
-import { X } from 'lucide-react'
+import { X, Check } from 'lucide-react'
+import { maskPhoneInput } from '@/lib/formatPhone'
 
 // This will be replaced with context/props in real usage, using a default valid UUID for MVP
-const EMPRESA_ID = "00000000-0000-0000-0000-000000000000" 
+const EMPRESA_ID = "a3f8c1d2-e7b4-4a92-b5f0-9d2e6c8a1f3b" 
 
 interface AuthModalProps {
   isOpen: boolean
@@ -119,8 +120,8 @@ export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
                 <Input 
                   id="phone" 
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="(AA) 90000-0000"
+                  onChange={(e) => setPhone(maskPhoneInput(e.target.value))}
+                  placeholder="(00) 00000-0000"
                   required={!isLogin}
                 />
               </div>

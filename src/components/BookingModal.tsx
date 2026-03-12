@@ -106,7 +106,12 @@ export function BookingModal({ isOpen, onClose, onSuccess, userId, empresaId }: 
 
   const fetchConfig = async () => {
     try {
-      const { data } = await supabase.from('business_config').select('*').limit(1).single()
+      const { data } = await supabase
+        .from('business_config')
+        .select('*')
+        .eq('empresa_id', empresaId)
+        .limit(1)
+        .single()
       if (data) setConfig(data)
     } catch (e) {
       console.error(e)
@@ -185,6 +190,18 @@ export function BookingModal({ isOpen, onClose, onSuccess, userId, empresaId }: 
     setServicesError('')
 
     try {
+      // 1. Fetch allowed services (those with at least 1 active barber)
+      const { data: activeBarbers } = await supabase
+        .from('barbers')
+        .select('id, barber_services(service_id)')
+        .eq('active', true)
+        
+      const allowedServiceIds = new Set<string>()
+      activeBarbers?.forEach((b: any) => {
+        b.barber_services?.forEach((bs: any) => allowedServiceIds.add(bs.service_id))
+      })
+
+      // 2. Fetch services
       const { data, error } = await supabase
         .from('services')
         .select('id, name, price, duration_minutes, image_url')
@@ -198,13 +215,14 @@ export function BookingModal({ isOpen, onClose, onSuccess, userId, empresaId }: 
             .from('services')
             .select('id, name, price, duration_minutes, image_url')
             .order('name')
-          if (retry.data) setServices(retry.data)
-          else throw retry.error
+          if (retry.data) {
+             setServices(retry.data.filter(s => allowedServiceIds.has(s.id)))
+          } else throw retry.error
         } else {
           throw error
         }
       } else if (data) {
-        setServices(data)
+        setServices(data.filter(s => allowedServiceIds.has(s.id)))
       }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
@@ -309,20 +327,44 @@ export function BookingModal({ isOpen, onClose, onSuccess, userId, empresaId }: 
       const [hours, minutes] = time.split(':').map(Number)
       const bookingDate = new Date(year, month - 1, day, hours, minutes)
 
-      const { error: bookingError } = await supabase
+      const endTime = new Date(bookingDate.getTime() + (selectedService.duration_minutes || 30) * 60000)
+
+      const { data: newBooking, error: bookingError } = await supabase
         .from('bookings')
         .insert({
           client_id: userId,
           service_id: selectedService.id,
           barber_id: selectedBarber ? selectedBarber.id : null,
           start_time: bookingDate.toISOString(),
+          end_time: endTime.toISOString(),
           empresa_id: empresaId,
           status: 'confirmed',
           guest_name: profile?.full_name || null,
           guest_phone: profile?.phone || null,
-        })
+        }).select().single()
 
       if (bookingError) throw bookingError
+
+      // Dispatch the WhatsApp Webhook if instance is configured
+      if (config?.evolution_instance_id && profile?.phone) {
+        const webhookPayload = {
+          event: "novo_agendamento",
+          instanceName: config.evolution_instance_id,
+          apikey_id: config.apikey_id,
+          phone: profile.phone,
+          clientName: profile?.full_name || 'Cliente',
+          serviceName: selectedService.name,
+          barberName: selectedBarber ? selectedBarber.name : 'Barbeiro',
+          bookingDate: bookingDate.toLocaleDateString('pt-BR'),
+          bookingTime: time
+        }
+
+        fetch('https://n8n.mundoai.com.br/webhook/novo-agendamento', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(webhookPayload)
+        }).catch(err => console.error("Erro ao notificar webhook whatsapp:", err))
+      }
 
       onSuccess()
       onClose()
@@ -459,7 +501,7 @@ export function BookingModal({ isOpen, onClose, onSuccess, userId, empresaId }: 
                         </p>
                       </div>
                     </div>
-                    <span className="font-bold text-red-500">R$ {service.price}</span>
+                    <span className="font-bold text-emerald-500">R$ {service.price}</span>
                   </div>
                 ))
               )}
@@ -534,7 +576,7 @@ export function BookingModal({ isOpen, onClose, onSuccess, userId, empresaId }: 
                   <p className="text-zinc-400 text-xs flex items-center gap-1">
                     <Clock className="w-3 h-3" /> {selectedService?.duration_minutes} min
                   </p>
-                  <p className="text-red-500 font-bold">R$ {selectedService?.price}</p>
+                  <p className="text-emerald-500 font-bold">R$ {selectedService?.price}</p>
                 </div>
               </div>
 
