@@ -13,7 +13,7 @@ export const metadata: Metadata = {
   title: "Styllus Nego d'Hora - Barbearia",
   description: "Agende seu horário na melhor barbearia da região.",
   icons: {
-    icon: "https://gnjcdjhvekshzkwvwfdb.supabase.co/storage/v1/object/public/services/Logotipo.png",
+    icon: "https://gnjcdjhvekshzkwvwfdb.supabase.co/storage/v1/object/public/services/Favicon.png",
   },
 };
 

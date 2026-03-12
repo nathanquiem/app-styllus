@@ -70,7 +70,8 @@ export default function LandingPage() {
     fetchData()
   }, [])
 
-  const bgUrl = "https://gnjcdjhvekshzkwvwfdb.supabase.co/storage/v1/object/public/services/Home.jpg"
+  const desktopBgUrl = "https://gnjcdjhvekshzkwvwfdb.supabase.co/storage/v1/object/public/services/Home.jpg"
+  const mobileBgUrl = "https://gnjcdjhvekshzkwvwfdb.supabase.co/storage/v1/object/public/services/Home_Mobile.jpg"
   const logoUrl = "https://gnjcdjhvekshzkwvwfdb.supabase.co/storage/v1/object/public/services/Logotipo.png"
 
   return (
@@ -115,11 +116,23 @@ export default function LandingPage() {
 
       {/* Hero Section */}
       <div className="w-full relative h-[600px] sm:h-[700px] flex items-center justify-center">
-        {/* Background Image Setup */}
+        {/* Mobile Background Image */}
         <div 
-          className="absolute inset-0 bg-cover bg-no-repeat bg-left sm:bg-center object-left z-0"
+          className="absolute inset-0 bg-cover bg-no-repeat bg-center z-0 sm:hidden"
           style={{ 
-            backgroundImage: `url(${bgUrl})`,
+            backgroundImage: `url(${mobileBgUrl})`,
+          }}
+        >
+          {/* Gradients to darken background */}
+          <div className="absolute inset-0 bg-gradient-to-r from-black/90 via-black/70 to-black/40 z-0"></div>
+          <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-transparent to-transparent z-0"></div>
+        </div>
+
+        {/* Desktop Background Image Setup */}
+        <div 
+          className="absolute inset-0 bg-cover bg-no-repeat bg-left sm:bg-center object-left z-0 hidden sm:block"
+          style={{ 
+            backgroundImage: `url(${desktopBgUrl})`,
             backgroundPosition: 'left center'
           }}
         >
