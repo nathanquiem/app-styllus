@@ -990,11 +990,11 @@ export default function PainelStyllus() {
               <div className="space-y-6">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                   <h2 className="text-2xl font-bold">Gestão de Agenda</h2>
-                  <div className="flex flex-wrap bg-zinc-900 border border-zinc-800 rounded-lg p-1">
-                    <button className={`px-4 py-1.5 text-sm rounded-md font-medium transition-colors ${agendaFilter === 'today' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-400 hover:text-zinc-200'}`} onClick={() => setAgendaFilter('today')}>Hoje</button>
-                    <button className={`px-4 py-1.5 text-sm rounded-md font-medium transition-colors ${agendaFilter === 'week' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-400 hover:text-zinc-200'}`} onClick={() => setAgendaFilter('week')}>Semana</button>
-                    <button className={`px-4 py-1.5 text-sm rounded-md font-medium transition-colors ${agendaFilter === 'future' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-400 hover:text-zinc-200'}`} onClick={() => setAgendaFilter('future')}>Futuros</button>
-                    <button className={`px-4 py-1.5 text-sm rounded-md font-medium transition-colors ${agendaFilter === 'past' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-400 hover:text-zinc-200'}`} onClick={() => setAgendaFilter('past')}>Histórico</button>
+                  <div className="w-full sm:w-auto grid grid-cols-2 sm:flex bg-zinc-900 border border-zinc-800 rounded-lg p-1 gap-1 sm:gap-0">
+                    <button className={`w-full text-center px-2 py-1.5 text-sm rounded-md font-medium transition-colors ${agendaFilter === 'today' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-400 hover:text-zinc-200'}`} onClick={() => setAgendaFilter('today')}>Hoje</button>
+                    <button className={`w-full text-center px-2 py-1.5 text-sm rounded-md font-medium transition-colors ${agendaFilter === 'week' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-400 hover:text-zinc-200'}`} onClick={() => setAgendaFilter('week')}>Semana</button>
+                    <button className={`w-full text-center px-2 py-1.5 text-sm rounded-md font-medium transition-colors ${agendaFilter === 'future' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-400 hover:text-zinc-200'}`} onClick={() => setAgendaFilter('future')}>Futuros</button>
+                    <button className={`w-full text-center px-2 py-1.5 text-sm rounded-md font-medium transition-colors ${agendaFilter === 'past' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-400 hover:text-zinc-200'}`} onClick={() => setAgendaFilter('past')}>Histórico</button>
                   </div>
                 </div>
 

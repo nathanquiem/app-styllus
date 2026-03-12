@@ -78,11 +78,11 @@ export default function LandingPage() {
       <header className="w-full border-b border-zinc-800/80 bg-black/60 backdrop-blur-xl sticky top-0 z-40">
         <div className="max-w-6xl mx-auto px-4 h-20 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <img src={logoUrl} alt="Logo" className="w-12 h-12 object-contain rounded-full border border-zinc-800 bg-black/50" />
-            <div className="flex flex-col">
-              <span className="font-bold text-lg tracking-tight text-white leading-none">Styllus Nego d'Hora</span>
+            <img src={logoUrl} alt="Logo" className="w-12 h-12 object-contain" />
+            <div className="flex flex-col pr-2">
+              <span className="font-bold text-[15px] sm:text-lg tracking-tight text-white leading-none">Styllus Nego d'Hora</span>
               {isOpenNow !== null && (
-                <span className={`text-xs font-semibold mt-1 flex items-center justify-center sm:justify-start gap-1.5 ${isOpenNow ? 'text-emerald-500' : 'text-red-500'}`}>
+                <span className={`text-xs font-semibold mt-1 flex items-center justify-start gap-1.5 ${isOpenNow ? 'text-emerald-500' : 'text-red-500'}`}>
                   <span className={`relative flex h-2 w-2`}>
                     <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isOpenNow ? 'bg-emerald-400' : 'bg-red-400'}`}></span>
                     <span className={`relative inline-flex rounded-full h-2 w-2 shadow-[0_0_8px] ${isOpenNow ? 'bg-emerald-500 shadow-emerald-500/50' : 'bg-red-500 shadow-red-500/50'}`}></span>
@@ -104,7 +104,7 @@ export default function LandingPage() {
                 <span>Entrar</span>
               </Button>
             )}
-            <Button className="font-semibold shadow-lg shadow-red-600/20 bg-red-600 hover:bg-red-700 text-white" onClick={() => setIsAuthModalOpen(true)}>
+            <Button className="font-semibold shadow-lg shadow-red-600/20 bg-red-600 hover:bg-red-700 text-white" onClick={() => user ? window.location.href = '/dashboard' : setIsAuthModalOpen(true)}>
               <CalendarDays className="w-4 h-4 mr-2" />
               Agendar
             </Button>
@@ -138,7 +138,7 @@ export default function LandingPage() {
             </p>
             
             <div className="flex flex-col sm:flex-row gap-4 pt-4 w-full sm:w-auto justify-center">
-              <Button size="lg" className="w-full sm:w-auto text-lg shadow-xl shadow-red-600/30 bg-red-600 hover:bg-red-700 text-white h-14 px-8" onClick={() => setIsAuthModalOpen(true)}>
+              <Button size="lg" className="w-full sm:w-auto text-lg shadow-xl shadow-red-600/30 bg-red-600 hover:bg-red-700 text-white h-14 px-8" onClick={() => user ? window.location.href = '/dashboard' : setIsAuthModalOpen(true)}>
                 <CalendarDays className="w-5 h-5 mr-2" />
                 Ver Horários Disponíveis
               </Button>
