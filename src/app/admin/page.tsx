@@ -12,7 +12,7 @@ import { format, parseISO, isAfter, subHours, startOfDay, endOfDay, startOfWeek,
 import { ptBR } from 'date-fns/locale'
 import { useRouter } from 'next/navigation'
 import { BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, LineChart, Line, CartesianGrid, Area, AreaChart } from 'recharts'
-import { formatPhone } from '@/lib/formatPhone'
+import { formatPhone, maskPhoneInput } from '@/lib/formatPhone'
 
 export default function PainelStyllus() {
   const { user, profile, logout } = useAuthStore()
@@ -1225,7 +1225,7 @@ export default function PainelStyllus() {
                       </div>
                       <div className="space-y-2">
                         <Label>Telefone / WhatsApp (Opcional)</Label>
-                        <Input placeholder="(XX) 90000-0000" value={quickPhone} onChange={e => setQuickPhone(e.target.value)} className="bg-zinc-900 border-zinc-800" />
+                        <Input placeholder="(11) 99999-9999" value={quickPhone} onChange={e => setQuickPhone(maskPhoneInput(e.target.value))} className="bg-zinc-900 border-zinc-800" maxLength={15} />
                       </div>
                     </div>
                     
