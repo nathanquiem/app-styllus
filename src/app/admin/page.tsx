@@ -263,7 +263,13 @@ export default function PainelStyllus() {
 
   // --- SERVICES LOGIC ---
   const fetchServices = async () => {
-    const { data, error } = await supabase.from('services').select('*').order('name')
+    const empresaId = profile?.empresa_id
+    if (!empresaId) return
+    const { data } = await supabase
+      .from('services')
+      .select('*')
+      .eq('empresa_id', empresaId)
+      .order('name')
     if (data) setServices(data)
   }
 
@@ -342,7 +348,13 @@ export default function PainelStyllus() {
 
   // --- BARBERS LOGIC ---
   const fetchBarbers = async () => {
-    const { data, error } = await supabase.from('barbers').select('*, barber_services(service_id)').order('name')
+    const empresaId = profile?.empresa_id
+    if (!empresaId) return
+    const { data } = await supabase
+      .from('barbers')
+      .select('*, barber_services(service_id)')
+      .eq('empresa_id', empresaId)
+      .order('name')
     if (data) setBarbersList(data)
   }
 
@@ -673,12 +685,15 @@ export default function PainelStyllus() {
     setIsClientsLoading(pageIndex === 0)
     const from = pageIndex * 50
     const to = from + 49
+    const empresaId = profile?.empresa_id
     
     let query = supabase.from('profiles').select('*', { count: 'exact' }).order('full_name', { ascending: true })
     
+    if (empresaId) query = query.eq('empresa_id', empresaId)
     if (search) query = query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`)
     
     const { data, count, error } = await query.range(from, to)
+
     
     if (data && !error) {
       if (pageIndex === 0) setClientsList(data)

@@ -46,15 +46,7 @@ export default function LandingPage() {
 
   useEffect(() => {
     async function fetchData() {
-      // Fetch services
-      const { data: svcData } = await supabase
-        .from('services')
-        .select('*')
-        .order('name')
-      
-      if (svcData) setServices(svcData)
-
-      // Fetch business config
+      // 1. Fetch business config first (scoped to this deployment's empresa)
       const { data: configData } = await supabase
         .from('business_config')
         .select('*')
@@ -63,6 +55,15 @@ export default function LandingPage() {
 
       if (configData) {
         checkIfOpen(configData)
+
+        // 2. Only fetch services belonging to this empresa
+        const { data: svcData } = await supabase
+          .from('services')
+          .select('*')
+          .eq('empresa_id', configData.empresa_id)
+          .order('name')
+
+        if (svcData) setServices(svcData)
       }
       setIsLoading(false)
     }

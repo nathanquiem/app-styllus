@@ -195,6 +195,7 @@ export function BookingModal({ isOpen, onClose, onSuccess, userId, empresaId }: 
         .from('barbers')
         .select('id, barber_services(service_id)')
         .eq('active', true)
+        .eq('empresa_id', empresaId)
         
       const allowedServiceIds = new Set<string>()
       activeBarbers?.forEach((b: any) => {
@@ -205,6 +206,7 @@ export function BookingModal({ isOpen, onClose, onSuccess, userId, empresaId }: 
       const { data, error } = await supabase
         .from('services')
         .select('id, name, price, duration_minutes, image_url')
+        .eq('empresa_id', empresaId)
         .order('name')
 
       if (error) {
@@ -214,6 +216,7 @@ export function BookingModal({ isOpen, onClose, onSuccess, userId, empresaId }: 
           const retry = await supabase
             .from('services')
             .select('id, name, price, duration_minutes, image_url')
+            .eq('empresa_id', empresaId)
             .order('name')
           if (retry.data) {
              setServices(retry.data.filter((s: { id: string }) => allowedServiceIds.has(s.id)))
@@ -252,6 +255,7 @@ export function BookingModal({ isOpen, onClose, onSuccess, userId, empresaId }: 
           barber_services!inner(service_id)
         `)
         .eq('active', true)
+        .eq('empresa_id', empresaId)
         .eq('barber_services.service_id', serviceId)
       
       if (error) throw error
