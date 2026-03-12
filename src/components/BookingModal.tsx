@@ -216,13 +216,13 @@ export function BookingModal({ isOpen, onClose, onSuccess, userId, empresaId }: 
             .select('id, name, price, duration_minutes, image_url')
             .order('name')
           if (retry.data) {
-             setServices(retry.data.filter(s => allowedServiceIds.has(s.id)))
+             setServices(retry.data.filter((s: { id: string }) => allowedServiceIds.has(s.id)))
           } else throw retry.error
         } else {
           throw error
         }
       } else if (data) {
-        setServices(data.filter(s => allowedServiceIds.has(s.id)))
+        setServices(data.filter((s: { id: string }) => allowedServiceIds.has(s.id)))
       }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
