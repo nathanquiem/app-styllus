@@ -12,9 +12,6 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "Styllus Nego d'Hora - Barbearia",
   description: "Agende seu horário na melhor barbearia da região.",
-  icons: {
-    icon: "/favicon1.ico",
-  },
 };
 
 export default function RootLayout({
