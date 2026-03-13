@@ -156,7 +156,7 @@ export default function LandingPage() {
                 <CalendarDays className="w-5 h-5 mr-2" />
                 Ver Horários Disponíveis
               </Button>
-              <Button size="lg" variant="outline" className="w-full sm:w-auto text-lg gap-2 h-14 px-8 border-zinc-700 text-white bg-black/40 backdrop-blur-sm hover:bg-zinc-800" onClick={() => window.open('https://wa.me/55', '_blank')}>
+              <Button size="lg" variant="outline" className="w-full sm:w-auto text-lg gap-2 h-14 px-8 border-zinc-700 text-white bg-black/40 backdrop-blur-sm hover:bg-zinc-800" onClick={() => window.open('https://wa.me/5511964473185?text=Olá%2C%20venho%20do%20seu%20site%20e%20gostaria%20de%20informações%20sobre%20cortes.', '_blank')}>
                 <MessageCircle className="w-5 h-5 text-emerald-500" />
                 Dúvidas (WhatsApp)
               </Button>
