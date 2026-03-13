@@ -59,8 +59,7 @@ export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
         if (signUpError) throw signUpError
 
         // Trigger handle_new_user() automatically creates the profile.
-        // Try a direct INSERT as fallback for cases where the trigger may
-        // not fire immediately (e.g. email confirmation enabled).
+        // Also try direct INSERT as fallback (silent — ignores conflict).
         if (data.user) {
           await supabase.from('profiles').insert({
             id: data.user.id,
@@ -69,8 +68,21 @@ export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
             email,
             role: 'client',
             empresa_id: EMPRESA_ID
-          }).then(() => {}) // Silently ignore conflict — trigger already handled it
+          }).then(() => {})
         }
+
+        // If session came back immediately (email confirmation OFF),
+        // redirect to dashboard right away — no need to login again.
+        if (data.session) {
+          onClose()
+          window.location.href = '/dashboard'
+          return
+        }
+
+        // Email confirmation is ON — show a friendly message
+        setError('Cadastro realizado! Verifique seu e-mail para confirmar a conta.')
+        setLoading(false)
+        return
       }
       
       if (onSuccess) onSuccess()

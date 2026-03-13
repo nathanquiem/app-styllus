@@ -310,7 +310,7 @@ export default function PainelStyllus() {
         duration_minutes: parseInt(serviceForm.duration, 10),
         description: serviceForm.description,
         image_url: imageUrl,
-        empresa_id: profile?.empresa_id || "a3f8c1d2-e7b4-4a92-b5f0-9d2e6c8a1f3b"
+        empresa_id: profile?.empresa_id || process.env.NEXT_PUBLIC_EMPRESA_ID!
       }
 
       if (editingServiceId) {
@@ -393,7 +393,7 @@ export default function PainelStyllus() {
         name: barberForm.name, 
         active: barberForm.active,
         photo_url: imageUrl,
-        empresa_id: profile?.empresa_id || "a3f8c1d2-e7b4-4a92-b5f0-9d2e6c8a1f3b"
+        empresa_id: profile?.empresa_id || process.env.NEXT_PUBLIC_EMPRESA_ID!
       }
       
       let barberId = editingBarberId
@@ -446,7 +446,7 @@ export default function PainelStyllus() {
 
   // --- CONFIG LOGIC ---
   const fetchConfig = async () => {
-    const empresaId = profile?.empresa_id || "a3f8c1d2-e7b4-4a92-b5f0-9d2e6c8a1f3b"
+    const empresaId = profile?.empresa_id || process.env.NEXT_PUBLIC_EMPRESA_ID!
     const { data } = await supabase
       .from('business_config')
       .select('*')
@@ -468,7 +468,7 @@ export default function PainelStyllus() {
       }
       
       if (!config.id) {
-        payload.empresa_id = profile?.empresa_id || "a3f8c1d2-e7b4-4a92-b5f0-9d2e6c8a1f3b"
+        payload.empresa_id = profile?.empresa_id || process.env.NEXT_PUBLIC_EMPRESA_ID!
         const { data, error } = await supabase.from('business_config').insert(payload).select().single()
         if (error) {
           if (error.message.includes('closed_dates')) {
@@ -632,7 +632,7 @@ export default function PainelStyllus() {
         service_id: quickServiceId,
         start_time: bookingDate.toISOString(),
         end_time: endTime.toISOString(),
-        empresa_id: profile?.empresa_id || "a3f8c1d2-e7b4-4a92-b5f0-9d2e6c8a1f3b",
+        empresa_id: profile?.empresa_id || process.env.NEXT_PUBLIC_EMPRESA_ID!,
         status: 'confirmed',
         guest_name: quickName,        
         guest_phone: quickPhone || null
@@ -885,7 +885,7 @@ export default function PainelStyllus() {
   // --- WHATSAPP LOGIC ---
   // Helper: get WhatsApp config directly from DB (avoids race with config state)
   const getWaConfig = async () => {
-    const empresaId = profile?.empresa_id || "a3f8c1d2-e7b4-4a92-b5f0-9d2e6c8a1f3b"
+    const empresaId = profile?.empresa_id || process.env.NEXT_PUBLIC_EMPRESA_ID!
     const { data } = await supabase
       .from('business_config')
       .select('evolution_instance_id, apikey_id')
