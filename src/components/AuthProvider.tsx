@@ -5,6 +5,8 @@ import { createClient } from '@/lib/supabase-browser'
 import { Session, AuthChangeEvent } from '@supabase/supabase-js'
 import { useAuthStore } from '@/store/authStore'
 
+const EMPRESA_ID = process.env.NEXT_PUBLIC_EMPRESA_ID!
+
 // Reuse the module-level singleton — never instantiate inside a hook
 const supabase = createClient()
 
@@ -23,13 +25,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (session?.user) {
           setUser(session.user)
 
+          // Filter profile by THIS app's empresa_id to prevent cross-tenant data leak
           const { data: prof } = await supabase
             .from('profiles')
             .select('*')
             .eq('id', session.user.id)
+            .eq('empresa_id', EMPRESA_ID)
             .maybeSingle()
 
           if (!cancelled && prof) setProfile(prof)
+          // If no profile for this empresa, user exists in another app — don't set profile
         }
       } catch (error: any) {
         if (
@@ -37,7 +42,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           error?.message?.includes('Lock broken') ||
           error?.message?.includes('AbortError')
         ) {
-          // Expected in React Strict Mode — silently ignore
           console.warn('Supabase auth lock (Strict Mode artifact) — ignored.')
         } else {
           console.error('Auth initialization error', error)
@@ -57,31 +61,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const updateProfile = async () => {
         if (session?.user) {
           setUser(session.user)
+
+          // Always filter by this app's empresa_id
           const { data: prof } = await supabase
             .from('profiles')
             .select('*')
             .eq('id', session.user.id)
+            .eq('empresa_id', EMPRESA_ID)
             .maybeSingle()
 
           if (!cancelled && prof) {
             setProfile(prof)
-          } else if (!cancelled && session.user && _event === 'SIGNED_IN') {
-            // Fallback: create basic profile if missing (edge case: signup insert failed)
-            const u = session.user
-            const fallbackProfile = {
-              id: u.id,
-              full_name: u.user_metadata?.full_name || u.email?.split('@')[0] || 'Usuário',
-              phone: u.user_metadata?.phone || null,
-              email: u.email || null,
-              role: 'client' as const,
-              empresa_id: 'a3f8c1d2-e7b4-4a92-b5f0-9d2e6c8a1f3b',
-            }
-            const { error: insertErr } = await supabase
-              .from('profiles')
-              .upsert(fallbackProfile, { onConflict: 'id' })
-            if (!insertErr && !cancelled) {
-              setProfile(fallbackProfile)
-            }
+          } else if (!cancelled && session.user && _event === 'SIGNED_IN' && !prof) {
+            // User has no profile in this empresa — sign them out to prevent cross-tenant access
+            console.warn('User has no profile in this empresa. Signing out.')
+            await supabase.auth.signOut()
           }
         } else {
           setUser(null)

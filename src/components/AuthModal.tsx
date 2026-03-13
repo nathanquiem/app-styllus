@@ -9,8 +9,7 @@ import { Label } from './ui/Label'
 import { X, Check } from 'lucide-react'
 import { maskPhoneInput } from '@/lib/formatPhone'
 
-// This will be replaced with context/props in real usage, using a default valid UUID for MVP
-const EMPRESA_ID = "a3f8c1d2-e7b4-4a92-b5f0-9d2e6c8a1f3b" 
+const EMPRESA_ID = process.env.NEXT_PUBLIC_EMPRESA_ID!
 
 interface AuthModalProps {
   isOpen: boolean
@@ -49,20 +48,28 @@ export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
         const { data, error: signUpError } = await supabase.auth.signUp({
           email,
           password,
+          options: {
+            data: {
+              full_name: fullName,
+              phone,
+              empresa_id: EMPRESA_ID,
+            }
+          }
         })
         if (signUpError) throw signUpError
 
+        // Trigger handle_new_user() automatically creates the profile.
+        // Try a direct INSERT as fallback for cases where the trigger may
+        // not fire immediately (e.g. email confirmation enabled).
         if (data.user) {
-          // After auth signup, create the profile
-          const { error: profileError } = await supabase.from('profiles').insert({
+          await supabase.from('profiles').insert({
             id: data.user.id,
             full_name: fullName,
             phone,
             email,
             role: 'client',
             empresa_id: EMPRESA_ID
-          })
-          if (profileError) throw profileError
+          }).then(() => {}) // Silently ignore conflict — trigger already handled it
         }
       }
       

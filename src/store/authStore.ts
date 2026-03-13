@@ -6,7 +6,7 @@ export interface Profile {
   full_name: string
   phone: string | null
   email: string | null
-  role: 'admin' | 'client'
+  role: string
   empresa_id: string
 }
 

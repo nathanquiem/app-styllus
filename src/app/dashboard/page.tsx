@@ -51,6 +51,7 @@ export default function DashboardPage() {
             .from('profiles')
             .select('*')
             .eq('id', user.id)
+            .eq('empresa_id', process.env.NEXT_PUBLIC_EMPRESA_ID!)
             .maybeSingle()
           if (prof) setProfile(prof)
         }
@@ -142,7 +143,7 @@ export default function DashboardPage() {
           <p className="text-sm text-zinc-400">Gerencie seus horários</p>
         </div>
         <div className="flex gap-2 sm:gap-4">
-          {profile?.role === 'admin' && (
+          {(profile?.role === 'admin' || profile?.role === 'admin-barbearia' || profile?.role === 'admin-styllus') && (
             <Button 
               variant="outline" 
               className="flex items-center gap-2 border-red-500/30 text-red-400 hover:bg-red-500/10"
@@ -275,7 +276,7 @@ export default function DashboardPage() {
         onClose={() => setIsBookingModalOpen(false)} 
         onSuccess={() => window.location.reload()} 
         userId={user.id}
-        empresaId={profile?.empresa_id || "a3f8c1d2-e7b4-4a92-b5f0-9d2e6c8a1f3b"} 
+        empresaId={profile?.empresa_id || process.env.NEXT_PUBLIC_EMPRESA_ID!} 
       />
 
       {isSettingsOpen && (
