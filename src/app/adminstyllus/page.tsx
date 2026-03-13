@@ -1017,8 +1017,9 @@ export default function PainelStyllus() {
 
   // --- METRICS STATE ---
 
+  // Admin route guard
   useEffect(() => {
-    if (!authLoading && (!user || (profile?.role !== 'admin' && profile?.role !== 'admin-barbearia' && profile?.role !== 'admin-styllus'))) {
+    if (!authLoading && (!user || profile?.role !== 'admin')) {
       router.push('/')
     }
   }, [authLoading, user, profile, router])
@@ -1026,7 +1027,7 @@ export default function PainelStyllus() {
   if (authLoading) {
     return <div className="min-h-screen bg-black flex items-center justify-center text-white">Carregando...</div>
   }
-  if (!user || (profile?.role !== 'admin' && profile?.role !== 'admin-barbearia' && profile?.role !== 'admin-styllus')) {
+  if (!user || profile?.role !== 'admin') {
     return <div className="min-h-screen bg-black flex items-center justify-center text-white">Acesso negado. Redirecionando...</div>
   }
 

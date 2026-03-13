@@ -143,11 +143,11 @@ export default function DashboardPage() {
           <p className="text-sm text-zinc-400">Gerencie seus horários</p>
         </div>
         <div className="flex gap-2 sm:gap-4">
-          {(profile?.role === 'admin' || profile?.role === 'admin-barbearia' || profile?.role === 'admin-styllus') && (
+          {profile?.role === 'admin' && (
             <Button 
               variant="outline" 
               className="flex items-center gap-2 border-red-500/30 text-red-400 hover:bg-red-500/10"
-              onClick={() => router.push('/admin')}
+              onClick={() => router.push('/adminstyllus')}
             >
               <Shield className="w-4 h-4" />
               <span className="hidden sm:inline">Painel</span>
