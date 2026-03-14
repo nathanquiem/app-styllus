@@ -23,7 +23,7 @@ export default function PainelStyllus() {
   const router = useRouter()
 
   // --- AGENDA STATE ---
-  const [agendaFilter, setAgendaFilter] = useState<'today' | 'week' | 'future' | 'past' | 'historyMonth'>('today')
+  const [agendaFilter, setAgendaFilter] = useState<'today' | 'week' | 'future' | 'past'>('today')
   const [historyMonth, setHistoryMonth] = useState(format(new Date(), 'yyyy-MM'))
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [agendaBookings, setAgendaBookings] = useState<any[]>([])
@@ -111,9 +111,453 @@ export default function PainelStyllus() {
       }
     }, 500)
     return () => clearTimeout(delayDebounce)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientsSearch, activeTab])
 
+  useEffect(() => {
+    if (activeTab === 'quick' && config && !quickDate) {
+      let d = new Date()
+      let foundDate = ''
+      for (let i = 0; i < 30; i++) {
+        const dateStr = format(d, 'yyyy-MM-dd')
+        const dayOfWeek = d.getDay()
+        const isClosedDate = config?.closed_dates?.includes(dateStr)
+        const isOpenDay = !config?.open_days || config.open_days.includes(dayOfWeek)
+        
+        let hasSlotsLeft = true
+        if (i === 0 && config?.close_time) {
+           const [closeH, closeM] = config.close_time.split(':').map(Number)
+           const closeTotal = closeH * 60 + closeM
+           const currentTotal = d.getHours() * 60 + d.getMinutes()
+           if (currentTotal + 30 >= closeTotal) {
+              hasSlotsLeft = false
+           }
+        }
+
+        if (!isClosedDate && isOpenDay && hasSlotsLeft) {
+          foundDate = dateStr
+          break
+        }
+        d.setDate(d.getDate() + 1)
+      }
+      if (foundDate) setQuickDate(foundDate)
+    }
+  }, [config, activeTab, quickDate])
+
+  // --- AGENDA LOGIC ---
+  const fetchAgenda = async (pageIndex = agendaPage) => {
+    setIsLoadingAgenda(pageIndex === 0)
+    try {
+      const now = new Date()
+      let startStr = ''
+      let endStr = ''
+
+      if (agendaFilter === 'today') {
+        startStr = startOfDay(now).toISOString()
+        endStr = endOfDay(now).toISOString()
+      } else if (agendaFilter === 'week') {
+        startStr = startOfWeek(now, { weekStartsOn: 0 }).toISOString()
+        endStr = endOfWeek(now, { weekStartsOn: 0 }).toISOString()
+      } else if (agendaFilter === 'future') {
+        const tomorrow = new Date(now)
+        tomorrow.setDate(tomorrow.getDate() + 1)
+        startStr = startOfDay(tomorrow).toISOString()
+        // Fetch up to 90 days ahead
+        const futureLimit = new Date(now)
+        futureLimit.setDate(futureLimit.getDate() + 90)
+        endStr = endOfDay(futureLimit).toISOString()
+      } else if (agendaFilter === 'past') {
+        const [y, m] = historyMonth.split('-').map(Number)
+        const selectedDate = new Date(y, m - 1, 1)
+        startStr = startOfMonth(selectedDate).toISOString()
+        endStr = endOfMonth(selectedDate).toISOString()
+      }
+
+      const from = pageIndex * 50
+      const to = from + 49
+
+      const { data, count, error } = await supabase
+        .from('bookings_styllus')
+        .select(`
+          *,
+          services_styllus (name, price, duration_minutes),
+          profiles_styllus:client_id (id, full_name, created_at, phone),
+          barbers_styllus (name)
+        `, { count: 'exact' })
+        .gte('start_time', startStr)
+        .lte('start_time', endStr)
+        .order('start_time', { ascending: agendaFilter !== 'past' })
+        .range(from, to)
+
+      if (error) throw error
+      
+      if (pageIndex === 0) setAgendaBookings(data || [])
+      else setAgendaBookings(prev => [...prev, ...(data || [])])
+      
+      setHasMoreAgenda(count !== null && count > to + 1)
+    } catch (error: any) {
+      console.error("Erro ao buscar agenda:", error.message)
+    } finally {
+      setIsLoadingAgenda(false)
+    }
+  }
+
+  const loadMoreAgenda = () => {
+    const nextPage = agendaPage + 1
+    setAgendaPage(nextPage)
+    fetchAgenda(nextPage)
+  }
+
+  const handleOpenBookingDetails = async (booking: any) => {
+    if (selectedBooking?.id === booking.id) {
+       setSelectedBooking(null)
+       return
+    }
+    setSelectedBooking(booking)
+    setSelectedClientDetails(null)
+
+    if (!booking.profiles?.id) {
+       setSelectedClientDetails({
+         totalCuts: 'N/A (Walk-in)',
+         registeredSince: 'N/A',
+         totalSpent: 'R$ ' + (booking.services_styllus?.price || 0)
+       })
+       return
+    }
+
+    try {
+      const { data: pastBookings, error } = await supabase
+        .from('bookings_styllus')
+        .select(`status, services_styllus(price)`)
+        .eq('client_id', booking.profiles.id)
+        .eq('status', 'confirmed')
+        
+      if (!error && pastBookings) {
+        const totalSpent = pastBookings.reduce((acc: number, curr: any) => acc + (Number(curr.services?.price) || 0), 0)
+        setSelectedClientDetails({
+          totalCuts: pastBookings.length || 0,
+          registeredSince: booking.profiles.created_at 
+            ? format(parseISO(booking.profiles.created_at), "MMM yyyy", { locale: ptBR })
+            : 'Desconhecido',
+          totalSpent: 'R$ ' + totalSpent.toFixed(2).replace('.', ',')
+        })
+      }
+    } catch (err) {
+      console.error("Erro ao buscar detalhes:", err)
+    }
+  }
+
+  const handleCancelAgendaBooking = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation() // prevent opening details
+    if (!confirm("Tem certeza que deseja cancelar este agendamento?")) return
+
+    try {
+      const { error } = await supabase.from('bookings_styllus').update({ status: 'canceled' }).eq('id', id)
+      if (error) throw error
+      setAgendaBookings(prev => prev.map(b => b.id === id ? { ...b, status: 'canceled' } : b))
+      if (selectedBooking?.id === id) setSelectedBooking(null)
+    } catch (err: any) {
+      alert("Erro ao cancelar: " + err.message)
+    }
+  }
+
+  // --- SERVICES LOGIC ---
+  const fetchServices = async () => {
+    const { data } = await supabase
+      .from('services_styllus')
+      .select('*')
+      .order('name')
+    if (data) setServices(data)
+  }
+
+  const handleEditService = (service: any) => {
+    setIsCreatingService(true)
+    setEditingServiceId(service.id)
+    setServiceForm({
+      name: service.name,
+      price: service.price.toString(),
+      duration: service.duration_minutes.toString(),
+      description: service.description || '',
+      image_url: service.image_url || ''
+    })
+    setServiceImageFile(null)
+  }
+
+  const handleSaveService = async () => {
+    if (!serviceForm.name || !serviceForm.price || !serviceForm.duration) {
+      alert("Preencha nome, preço e duração.")
+      return
+    }
+    setIsSavingService(true)
+    try {
+      let imageUrl = serviceForm.image_url
+
+      if (serviceImageFile) {
+        const fileExt = serviceImageFile.name.split('.').pop()
+        const fileName = `${Math.random().toString(36).substring(2, 15)}.${fileExt}`
+        const { error: uploadError } = await supabase.storage.from('services').upload(fileName, serviceImageFile)
+        if (uploadError) throw new Error("Erro upload: " + uploadError.message)
+        const { data: urlData } = supabase.storage.from('services').getPublicUrl(fileName)
+        imageUrl = urlData.publicUrl
+      }
+
+      const payload = {
+        name: serviceForm.name,
+        price: parseFloat(serviceForm.price),
+        duration_minutes: parseInt(serviceForm.duration, 10),
+        description: serviceForm.description,
+        image_url: imageUrl,
+        
+      }
+
+      if (editingServiceId) {
+        const { error } = await supabase.from('services_styllus').update(payload).eq('id', editingServiceId)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('services_styllus').insert(payload)
+        if (error) throw error
+      }
+
+      setIsCreatingService(false)
+      setEditingServiceId(null)
+      setServiceForm({ name: '', price: '', duration: '', description: '', image_url: '' })
+      setServiceImageFile(null)
+      fetchServices()
+      alert("Serviço salvo com sucesso!")
+    } catch (err: any) {
+      alert("Erro ao salvar serviço: " + err.message)
+    } finally {
+      setIsSavingService(false)
+    }
+  }
+
+  const handleDeleteService = async (id: string) => {
+    if (!confirm("Tem certeza que deseja excluir este serviço?")) return
+    try {
+      const { error } = await supabase.from('services_styllus').delete().eq('id', id)
+      if (error) throw error
+      fetchServices()
+      alert("Serviço excluído com sucesso!")
+    } catch (err: any) {
+      alert("Erro ao excluir serviço: " + err.message)
+    }
+  }
+
+  // --- BARBERS LOGIC ---
+  const fetchBarbers = async () => {
+    const { data } = await supabase
+      .from('barbers_styllus')
+      .select('*, barber_services_styllus(service_id)')
+      .order('name')
+    if (data) setBarbersList(data)
+  }
+
+  const handleEditBarber = (barber: any) => {
+    setIsCreatingBarber(true)
+    setEditingBarberId(barber.id)
+    setBarberForm({
+      name: barber.name,
+      active: barber.active !== false,
+      selectedServices: barber.barber_services_styllus?.map((bs: any) => bs.service_id) || [],
+      photo_url: barber.photo_url || ''
+    })
+    setBarberImageFile(null)
+  }
+
+  const handleSaveBarber = async () => {
+    if (!barberForm.name) return alert("Preencha o nome do barbeiro.")
+    setIsSavingBarber(true)
+    try {
+      let imageUrl = barberForm.photo_url
+
+      if (barberImageFile) {
+        const fileExt = barberImageFile.name.split('.').pop()
+        const fileName = `${Math.random().toString(36).substring(2, 15)}.${fileExt}`
+        const { error: uploadError } = await supabase.storage.from('barbers').upload(fileName, barberImageFile)
+        if (uploadError) {
+          console.warn("Upload barbers image error (bucket may not exist):", uploadError.message)
+          // continuing without image if bucket doesn't exist
+        } else {
+          const { data: urlData } = supabase.storage.from('barbers').getPublicUrl(fileName)
+          imageUrl = urlData.publicUrl
+        }
+      }
+
+      const payload = { 
+        name: barberForm.name, 
+        active: barberForm.active,
+        photo_url: imageUrl,
+        
+      }
+      
+      let barberId = editingBarberId
+
+      if (editingBarberId) {
+        const { error } = await supabase.from('barbers_styllus').update(payload).eq('id', editingBarberId)
+        if (error) throw error
+      } else {
+        const { data, error } = await supabase.from('barbers_styllus').insert(payload).select().single()
+        if (error) throw error
+        barberId = data.id
+      }
+
+      // Link services
+      if (barberId) {
+        await supabase.from('barber_services_styllus').delete().eq('barber_id', barberId)
+        if (barberForm.selectedServices.length > 0) {
+          const links = barberForm.selectedServices.map(sid => ({ barber_id: barberId, service_id: sid }))
+          await supabase.from('barber_services_styllus').insert(links)
+        }
+      }
+
+      setIsCreatingBarber(false)
+      setEditingBarberId(null)
+      setBarberForm({ name: '', active: true, selectedServices: [], photo_url: '' })
+      setBarberImageFile(null)
+      fetchBarbers()
+      alert("Barbeiro salvo com sucesso! Se a imagem não subiu, verifique se criou o bucket 'barbers' PÚBLICO no Supabase.")
+    } catch (err: any) {
+      alert("Erro ao salvar barbeiro: " + err.message)
+    } finally {
+      setIsSavingBarber(false)
+    }
+  }
+
+  const handleDeleteBarber = async (id: string) => {
+    if (!confirm("Apagar barbeiro?")) return
+    await supabase.from('barbers_styllus').delete().eq('id', id)
+    fetchBarbers()
+  }
+
+  const toggleServiceForBarber = (serviceId: string) => {
+    setBarberForm(prev => {
+      const s = new Set(prev.selectedServices)
+      if (s.has(serviceId)) s.delete(serviceId)
+      else s.add(serviceId)
+      return { ...prev, selectedServices: Array.from(s) }
+    })
+  }
+
+  // --- CONFIG LOGIC ---
+  const fetchConfig = async () => {
+    const empresaId = process.env.NEXT_PUBLIC_EMPRESA_ID!
+    const { data } = await supabase
+      .from('business_config_styllus')
+      .select('*')
+      
+      .limit(1)
+      .single()
+    if (data) setConfig(data)
+  }
+
+  const handleSaveConfig = async () => {
+    setIsSavingConfig(true)
+    try {
+      const payload: any = {
+        open_time: config.open_time || '09:00',
+        close_time: config.close_time || '19:00',
+        open_days: config.open_days || [1,2,3,4,5,6],
+        closed_dates: config.closed_dates || [],
+        cancel_limit_hours: config.cancel_limit_hours ?? 2
+      }
+      
+      if (!config.id) {
+
+        const { data, error } = await supabase.from('business_config_styllus').insert(payload).select().single()
+        if (error) {
+          if (error.message.includes('closed_dates')) {
+            throw new Error("A coluna 'closed_dates' não existe na tabela 'business_config'. Execute o comando SQL fornecido.")
+          }
+          throw error
+        }
+        setConfig(data)
+      } else {
+        const { error } = await supabase.from('business_config_styllus')
+          .update(payload)
+          .eq('id', config.id)
+        if (error) {
+          if (error.message.includes('closed_dates')) {
+            throw new Error("A coluna 'closed_dates' não existe na tabela 'business_config'. Execute o comando SQL fornecido.")
+          }
+          throw error
+        }
+      }
+      alert("Configurações salvas!")
+    } catch (err: any) {
+      alert("Erro ao salvar configurações: " + err.message)
+    } finally {
+      setIsSavingConfig(false)
+    }
+  }
+
+  const toggleDay = (day: number) => {
+    setConfig((prev: any) => {
+      const current = new Set(prev.open_days || [])
+      if (current.has(day)) current.delete(day)
+      else current.add(day)
+      return { ...prev, open_days: Array.from(current).sort() }
+    })
+  }
+
+  const addClosedDate = (date: string) => {
+    if (!date) return
+    setConfig((prev: any) => {
+      const dates = new Set(prev.closed_dates || [])
+      dates.add(date)
+      return { ...prev, closed_dates: Array.from(dates).sort() }
+    })
+  }
+
+  const removeClosedDate = (dateToRemove: string) => {
+    setConfig((prev: any) => {
+      const dates = (prev.closed_dates || []).filter((d: string) => d !== dateToRemove)
+      return { ...prev, closed_dates: dates }
+    })
+  }
+
   // --- QUICK BOOKING LOGIC ---
+  useEffect(() => {
+    if (quickDate) fetchOccupiedSlots()
+    else setOccupiedSlots([])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quickDate, quickBarberId])
+
+  const fetchOccupiedSlots = async () => {
+    const [year, month, day] = quickDate.split('-').map(Number)
+    const startOfDayStr = new Date(year, month - 1, day, 0, 0, 0).toISOString()
+    const endOfDayStr = new Date(year, month - 1, day, 23, 59, 59).toISOString()
+
+    let query = supabase.from('bookings_styllus').select('start_time, service_id').gte('start_time', startOfDayStr).lte('start_time', endOfDayStr).neq('status', 'canceled')
+    if (quickBarberId) query = query.eq('barber_id', quickBarberId)
+      
+    const { data: bookings } = await query
+    if (!bookings || bookings.length === 0) return setOccupiedSlots([])
+
+    const serviceIds = [...new Set(bookings.map((b: any) => b.service_id).filter(Boolean))]
+    const durationMap: Record<string, number> = {}
+
+    if (serviceIds.length > 0) {
+      const { data: svcData } = await supabase.from('services_styllus').select('id, duration_minutes').in('id', serviceIds)
+      if (svcData) svcData.forEach((s: any) => { durationMap[s.id] = s.duration_minutes })
+    }
+
+    const blocked = new Set<string>()
+    bookings.forEach((b: any) => {
+      const start = new Date(b.start_time)
+      const duration = durationMap[b.service_id] ?? 30
+      const end = new Date(start.getTime() + duration * 60 * 1000)
+
+      let cursor = new Date(start)
+      while (cursor < end) {
+        const hh = cursor.getHours().toString().padStart(2, '0')
+        const mm = cursor.getMinutes().toString().padStart(2, '0')
+        blocked.add(`${hh}:${mm}`)
+        cursor = new Date(cursor.getTime() + 30 * 60 * 1000)
+      }
+    })
+    setOccupiedSlots(Array.from(blocked))
+  }
+
   const generateQuickTimeSlots = () => {
     const slots = []
     let startHour = 9
@@ -135,42 +579,19 @@ export default function PainelStyllus() {
     const isToday = quickDate === format(now, 'yyyy-MM-dd')
     const currentTotalMinutes = now.getHours() * 60 + now.getMinutes()
 
-    const selectedServiceData = services.find(s => s.id === quickServiceId)
-    const serviceDuration = selectedServiceData?.duration || 30 // Use 'duration' from serviceForm, assuming it's in minutes
-    const neededSlots = Math.ceil(serviceDuration / 30) // Number of 30-min slots required for the service
-
     while (true) {
       const slotTotalMinutes = cursorH * 60 + cursorM
 
-      // A slot is valid only if it finishes by closing time
-      if (slotTotalMinutes + serviceDuration > closeTotalMinutes) break
+      // A slot is valid only if it finishes by closing time (each slot = 30 min)
+      if (slotTotalMinutes + 30 > closeTotalMinutes) break
 
       const slotStr = `${cursorH.toString().padStart(2, '0')}:${cursorM.toString().padStart(2, '0')}`
       
       let isValidSlot = true
       if (isToday) {
-        // If today, ensure the slot is at least 30 minutes in the future
         if (slotTotalMinutes < currentTotalMinutes + 30) {
           isValidSlot = false
         }
-      }
-
-      // Check if this slot AND the subsequent needed slots are free
-      if (isValidSlot) {
-         let subCursorM = cursorM
-         let subCursorH = cursorH
-         for (let i = 0; i < neededSlots; i++) {
-            const checkStr = `${subCursorH.toString().padStart(2, '0')}:${subCursorM.toString().padStart(2, '0')}`
-            if (occupiedSlots.includes(checkStr)) {
-               isValidSlot = false
-               break
-            }
-            subCursorM += 30
-            if (subCursorM >= 60) {
-               subCursorM -= 60
-               subCursorH += 1
-            }
-         }
       }
 
       if (isValidSlot) {
@@ -186,589 +607,422 @@ export default function PainelStyllus() {
     return slots
   }
 
-  useEffect(() => {
-    if (activeTab === 'quick' && config && !quickDate) {
-      let d = new Date()
-      let foundDate = ''
-      for (let i = 0; i < 30; i++) {
-        const dateStr = format(d, 'yyyy-MM-dd')
-        const dayOfWeek = d.getDay()
-        const isClosedDate = config?.closed_dates?.includes(dateStr)
-        const openDaysArr = Array.isArray(config?.open_days) 
-          ? config.open_days.map(Number) 
-          : typeof config?.open_days === 'string' 
-            ? JSON.parse(config.open_days).map(Number) 
-            : []
-        const isOpenDay = !config?.open_days || openDaysArr.includes(dayOfWeek)
-        
-        let hasSlotsLeft = true
-        if (i === 0 && config?.close_time) {
-           const [closeH, closeM] = config.close_time.split(':').map(Number)
-           const closeTotal = closeH * 60 + closeM
-           const currentTotal = d.getHours() * 60 + d.getMinutes()
-           if (currentTotal + 30 >= closeTotal) { // Check if there's at least one 30-min slot left today
-              hasSlotsLeft = false
-           }
-        }
-
-        if (!isClosedDate && isOpenDay && hasSlotsLeft) {
-          foundDate = dateStr
-          break
-        }
-        d.setDate(d.getDate() + 1)
-      }
-      if (foundDate) setQuickDate(foundDate)
-    }
-  }, [activeTab, config, quickDate])
-
-  useEffect(() => {
-    if (quickDate && quickServiceId && quickBarberId) {
-      fetchOccupiedSlots()
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quickDate, quickServiceId, quickBarberId])
-
-  const fetchOccupiedSlots = async () => {
-    if (!quickDate || !quickBarberId || !quickServiceId) return
-
-    const { data: bookings, error } = await supabase
-      .from('bookings_styllus')
-      .select('time')
-      .eq('date', quickDate)
-      .eq('barber_id', quickBarberId)
-      .eq('status', 'confirmed')
-
-    if (error) {
-      console.error('Error fetching occupied slots:', error)
-      return
-    }
-
-    const selectedServiceData = services.find(s => s.id === quickServiceId)
-    const serviceDuration = selectedServiceData?.duration || 30 // Default to 30 if not found
-
-    const occupied = new Set<string>()
-    bookings.forEach((booking: any) => {
-      const [h, m] = booking.time.split(':').map(Number)
-      const bookingStartTotalMinutes = h * 60 + m
-      
-      // Mark all 30-minute intervals covered by the booking as occupied
-      for (let i = 0; i < serviceDuration; i += 30) {
-        const slotMinutes = bookingStartTotalMinutes + i
-        const slotH = Math.floor(slotMinutes / 60)
-        const slotM = slotMinutes % 60
-        occupied.add(`${slotH.toString().padStart(2, '0')}:${slotM.toString().padStart(2, '0')}`)
-      }
-    })
-    setOccupiedSlots(Array.from(occupied))
-  }
-
   const handleConfirmQuickBooking = async () => {
-    if (!quickName || !quickPhone || !quickServiceId || !quickBarberId || !quickDate || !quickTime) {
-      alert('Por favor, preencha todos os campos.')
-      return
+    if (!quickName || !quickServiceId || !quickDate || !quickTime) {
+      return alert("Preencha Nome, Serviço, Data e Horário.")
     }
 
     setIsQuickBooking(true)
     try {
-      // First, check if the client exists
-      let client_id = null
-      const { data: existingClient, error: clientError } = await supabase
-        .from('clients_styllus')
-        .select('id')
-        .eq('phone', quickPhone.replace(/\D/g, ''))
-        .single()
+      const [year, month, day] = quickDate.split('-').map(Number)
+      const [hours, minutes] = quickTime.split(':').map(Number)
+      const bookingDate = new Date(year, month - 1, day, hours, minutes)
 
-      if (clientError && clientError.code !== 'PGRST116') { // PGRST116 means no rows found
-        console.error('Error checking client:', clientError)
-        alert('Erro ao verificar cliente.')
-        setIsQuickBooking(false)
-        return
+      // 1. Fetch Service details to calculate end_time and get names for webhook
+      const { data: svcData } = await supabase.from('services_styllus').select('name, duration_minutes').eq('id', quickServiceId).single()
+      const duration = svcData?.duration_minutes || 30
+      const serviceName = svcData?.name || 'Serviço'
+      
+      const endTime = new Date(bookingDate.getTime() + duration * 60000)
+
+      const payload: any = {
+        client_id: user?.id,
+        service_id: quickServiceId,
+        start_time: bookingDate.toISOString(),
+        end_time: endTime.toISOString(),
+        
+        status: 'confirmed',
+        guest_name: quickName,        
+        guest_phone: quickPhone || null
       }
+      if (quickBarberId) payload.barber_id = quickBarberId
 
-      if (existingClient) {
-        client_id = existingClient.id
-      } else {
-        // If client doesn't exist, create a new one
-        const { data: newClient, error: createClientError } = await supabase
-          .from('clients_styllus')
-          .insert({ full_name: quickName, phone: quickPhone.replace(/\D/g, ''), user_id: user?.id })
-          .select('id')
-          .single()
+      const { data: newBooking, error } = await supabase.from('bookings_styllus').insert(payload).select().single()
+      if (error) throw error
 
-        if (createClientError) {
-          console.error('Error creating client:', createClientError)
-          alert('Erro ao criar novo cliente.')
-          setIsQuickBooking(false)
-          return
+      // 2. Dispatch the WhatsApp Webhook if instance is configured
+      if (config?.evolution_instance_id && quickPhone) {
+        let barberName = 'Barbeiro'
+        if (quickBarberId) {
+          const { data: barbData } = await supabase.from('barbers_styllus').select('name').eq('id', quickBarberId).single()
+          if (barbData) barberName = barbData.name
         }
-        client_id = newClient.id
+
+        const webhookPayload = {
+          event: "novo_agendamento",
+          instanceName: config.evolution_instance_id,
+          apikey_id: config.apikey_id,
+          phone: quickPhone,
+          clientName: quickName,
+          serviceName: serviceName,
+          barberName: barberName,
+          bookingDate: bookingDate.toLocaleDateString('pt-BR'),
+          bookingTime: quickTime
+        }
+
+        // Fire & Forget webhook
+        fetch('https://n8n.mundoai.com.br/webhook/novo-agendamento', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(webhookPayload)
+        }).catch(err => console.error("Erro ao notificar webhook whatsapp:", err))
       }
 
-      // Get service details for duration
-      const serviceDetails = services.find(s => s.id === quickServiceId)
-      if (!serviceDetails) {
-        alert('Serviço não encontrado.')
-        setIsQuickBooking(false)
-        return
-      }
-
-      const { error: bookingError } = await supabase
-        .from('bookings_styllus')
-        .insert({
-          client_id: client_id,
-          barber_id: quickBarberId,
-          service_id: quickServiceId,
-          date: quickDate,
-          time: quickTime,
-          duration: serviceDetails.duration, // Use duration from service details
-          status: 'confirmed',
-          user_id: user?.id,
-          price: serviceDetails.price
-        })
-
-      if (bookingError) {
-        console.error('Error creating quick booking:', bookingError)
-        alert('Erro ao criar agendamento rápido. Verifique se o horário já não está ocupado.')
-      } else {
-        alert('Agendamento rápido criado com sucesso!')
-        setQuickName('')
-        setQuickPhone('')
-        setQuickServiceId('')
-        setQuickBarberId('')
-        setQuickTime('')
-        // Re-fetch agenda to show new booking
-        fetchAgenda(0)
-        // Re-fetch occupied slots for the current quickDate
-        fetchOccupiedSlots()
-      }
-    } catch (error) {
-      console.error('Unexpected error during quick booking:', error)
-      alert('Ocorreu um erro inesperado.')
+      alert("Encaixe confirmado com sucesso!")
+      setQuickName(''); setQuickPhone(''); setQuickServiceId(''); setQuickBarberId(''); setQuickDate(''); setQuickTime('')
+      setActiveTab('agenda')
+    } catch (error: any) {
+      alert("Erro no agendamento: " + error.message)
     } finally {
       setIsQuickBooking(false)
     }
   }
 
-  // --- SERVICES LOGIC ---
-  const fetchServices = async () => {
-    const { data, error } = await supabase.from('services_styllus').select('*').eq('user_id', user?.id).order('name', { ascending: true })
-    if (error) console.error('Error fetching services:', error)
-    else setServices(data)
-  }
-
-  const handleSaveService = async () => {
-    setIsSavingService(true)
-    let imageUrl = serviceForm.image_url
-
-    if (serviceImageFile) {
-      const fileExt = serviceImageFile.name.split('.').pop()
-      const fileName = `${Math.random()}.${fileExt}`
-      const filePath = `${user?.id}/${fileName}`
-
-      const { error: uploadError, data: uploadData } = await supabase.storage
-        .from('service_images')
-        .upload(filePath, serviceImageFile, {
-          cacheControl: '3600',
-          upsert: false,
-        })
-
-      if (uploadError) {
-        console.error('Error uploading service image:', uploadError)
-        alert('Erro ao fazer upload da imagem.')
-        setIsSavingService(false)
-        return
-      }
-      imageUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/service_images/${filePath}`
-    }
-
-    const serviceData = {
-      name: serviceForm.name,
-      price: parseFloat(serviceForm.price),
-      duration: parseInt(serviceForm.duration),
-      description: serviceForm.description,
-      image_url: imageUrl,
-      user_id: user?.id,
-    }
-
-    if (editingServiceId) {
-      const { error } = await supabase.from('services_styllus').update(serviceData).eq('id', editingServiceId)
-      if (error) console.error('Error updating service:', error)
-      else {
-        alert('Serviço atualizado com sucesso!')
-        setEditingServiceId(null)
-        setIsCreatingService(false)
-        fetchServices()
-      }
-    } else {
-      const { error } = await supabase.from('services_styllus').insert(serviceData)
-      if (error) console.error('Error creating service:', error)
-      else {
-        alert('Serviço criado com sucesso!')
-        setIsCreatingService(false)
-        fetchServices()
-      }
-    }
-    setIsSavingService(false)
-  }
-
-  const handleEditService = (service: any) => {
-    setEditingServiceId(service.id)
-    setServiceForm({
-      name: service.name,
-      price: service.price.toString(),
-      duration: service.duration.toString(),
-      description: service.description || '',
-      image_url: service.image_url || ''
-    })
-    setServiceImageFile(null)
-    setIsCreatingService(true)
-  }
-
-  const handleDeleteService = async (id: string) => {
-    if (!confirm('Tem certeza que deseja excluir este serviço?')) return
-    const { error } = await supabase.from('services_styllus').delete().eq('id', id)
-    if (error) console.error('Error deleting service:', error)
-    else fetchServices()
-  }
-
-  // --- BARBERS LOGIC ---
-  const fetchBarbers = async () => {
-    const { data, error } = await supabase.from('barbers_styllus').select('*, barber_services_styllus(service_id)').eq('user_id', user?.id).order('name', { ascending: true })
-    if (error) console.error('Error fetching barbers:', error)
-    else {
-      const barbersWithServices = data.map((barber: any) => ({
-        ...barber,
-        selectedServices: barber.barber_services_styllus.map((bs: { service_id: string }) => bs.service_id)
-      }))
-      setBarbersList(barbersWithServices)
-    }
-  }
-
-  const toggleServiceForBarber = (serviceId: string) => {
-    setBarberForm(prev => {
-      const newSelectedServices = prev.selectedServices.includes(serviceId)
-        ? prev.selectedServices.filter(id => id !== serviceId)
-        : [...prev.selectedServices, serviceId]
-      return { ...prev, selectedServices: newSelectedServices }
-    })
-  }
-
-  const handleSaveBarber = async () => {
-    setIsSavingBarber(true)
-    let photoUrl = barberForm.photo_url
-
-    if (barberImageFile) {
-      const fileExt = barberImageFile.name.split('.').pop()
-      const fileName = `${Math.random()}.${fileExt}`
-      const filePath = `${user?.id}/barbers/${fileName}`
-
-      const { error: uploadError, data: uploadData } = await supabase.storage
-        .from('barber_photos')
-        .upload(filePath, barberImageFile, {
-          cacheControl: '3600',
-          upsert: false,
-        })
-
-      if (uploadError) {
-        console.error('Error uploading barber photo:', uploadError)
-        alert('Erro ao fazer upload da foto.')
-        setIsSavingBarber(false)
-        return
-      }
-      photoUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/barber_photos/${filePath}`
-    }
-
-    const barberData = {
-      name: barberForm.name,
-      active: barberForm.active,
-      photo_url: photoUrl,
-      user_id: user?.id,
-    }
-
-    if (editingBarberId) {
-      const { error: updateError } = await supabase.from('barbers_styllus').update(barberData).eq('id', editingBarberId)
-      if (updateError) {
-        console.error('Error updating barber:', updateError)
-        alert('Erro ao atualizar barbeiro.')
-        setIsSavingBarber(false)
-        return
-      }
-      // Update barber_services_styllus
-      await supabase.from('barber_services_styllus').delete().eq('barber_id', editingBarberId)
-      const serviceInserts = barberForm.selectedServices.map(service_id => ({ barber_id: editingBarberId, service_id }))
-      if (serviceInserts.length > 0) {
-        await supabase.from('barber_services_styllus').insert(serviceInserts)
-      }
-      alert('Barbeiro atualizado com sucesso!')
-      setEditingBarberId(null)
-      setIsCreatingBarber(false)
-      fetchBarbers()
-    } else {
-      const { data: newBarber, error: insertError } = await supabase.from('barbers_styllus').insert(barberData).select('id').single()
-      if (insertError) {
-        console.error('Error creating barber:', insertError)
-        alert('Erro ao criar barbeiro.')
-        setIsSavingBarber(false)
-        return
-      }
-      // Insert barber_services_styllus
-      const serviceInserts = barberForm.selectedServices.map(service_id => ({ barber_id: newBarber.id, service_id }))
-      if (serviceInserts.length > 0) {
-        await supabase.from('barber_services_styllus').insert(serviceInserts)
-      }
-      alert('Barbeiro criado com sucesso!')
-      setIsCreatingBarber(false)
-      fetchBarbers()
-    }
-    setIsSavingBarber(false)
-  }
-
-  const handleEditBarber = (barber: any) => {
-    setEditingBarberId(barber.id)
-    setBarberForm({
-      name: barber.name,
-      active: barber.active,
-      selectedServices: barber.selectedServices,
-      photo_url: barber.photo_url || ''
-    })
-    setBarberImageFile(null)
-    setIsCreatingBarber(true)
-  }
-
-  const handleDeleteBarber = async (id: string) => {
-    if (!confirm('Tem certeza que deseja excluir este barbeiro?')) return
-    const { error } = await supabase.from('barbers_styllus').delete().eq('id', id)
-    if (error) console.error('Error deleting barber:', error)
-    else fetchBarbers()
-  }
-
   // --- CLIENTS LOGIC ---
-  const fetchClients = async (page: number, search: string) => {
-    setIsClientsLoading(true)
-    const ITEMS_PER_PAGE = 10
-    const from = page * ITEMS_PER_PAGE
-    const to = from + ITEMS_PER_PAGE - 1
+  const fetchClients = async (pageIndex = clientsPage, search = clientsSearch) => {
+    setIsClientsLoading(pageIndex === 0)
+    const from = pageIndex * 50
+    const to = from + 49
+        
+    let query = supabase.from('profiles_styllus').select('*', { count: 'exact' }).order('full_name', { ascending: true })
+    
+        if (search) query = query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`)
+    
+    const { data, count, error } = await query.range(from, to)
 
-    let query = supabase
-      .from('clients_styllus')
-      .select('*, bookings_styllus(price)', { count: 'exact' })
-      .eq('user_id', user?.id)
-      .order('created_at', { ascending: false })
-      .range(from, to)
+    if (data && !error) {
+      // Fetch booking stats for these clients in one query
+      const clientIds = data.map((c: any) => c.id).filter(Boolean)
+      let statsMap: Record<string, { bookingCount: number; totalSpent: number }> = {}
 
-    if (search) {
-      query = query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`)
-    }
+      if (clientIds.length > 0) {
+        const { data: bookingStats } = await supabase
+          .from('bookings_styllus')
+          .select('client_id, services_styllus(price)')
+          .in('client_id', clientIds)
+          .eq('status', 'confirmed')
+          
 
-    const { data, error, count } = await query
+        if (bookingStats) {
+          bookingStats.forEach((b: any) => {
+            if (!b.client_id) return
+            if (!statsMap[b.client_id]) statsMap[b.client_id] = { bookingCount: 0, totalSpent: 0 }
+            statsMap[b.client_id].bookingCount += 1
+            statsMap[b.client_id].totalSpent += Number(b.services_styllus?.price) || 0
+          })
+        }
+      }
 
-    if (error) {
-      console.error('Error fetching clients:', error)
-    } else {
-      const clientsWithMetrics = data.map((client: any) => ({
-        ...client,
-        bookingCount: client.bookings_styllus.length,
-        totalSpent: client.bookings_styllus.reduce((sum: number, booking: { price: number }) => sum + booking.price, 0)
+      const enriched = data.map((c: any) => ({
+        ...c,
+        bookingCount: statsMap[c.id]?.bookingCount || 0,
+        totalSpent: statsMap[c.id]?.totalSpent || 0,
       }))
 
-      if (page === 0) {
-        setClientsList(clientsWithMetrics)
-      } else {
-        setClientsList(prev => [...prev, ...clientsWithMetrics])
-      }
-      setHasMoreClients(count && count > to + 1)
-      setClientsPage(page)
+      if (pageIndex === 0) setClientsList(enriched)
+      else setClientsList(prev => [...prev, ...enriched])
+      
+      setHasMoreClients(count !== null && count > to + 1)
     }
     setIsClientsLoading(false)
   }
 
   const loadMoreClients = () => {
-    fetchClients(clientsPage + 1, clientsSearch)
+    const nextPage = clientsPage + 1
+    setClientsPage(nextPage)
+    fetchClients(nextPage)
   }
-
-  // --- CONFIG LOGIC ---
-  const fetchConfig = async () => {
-    const { data, error } = await supabase.from('config_styllus').select('*').eq('user_id', user?.id).single()
-    if (error && error.code !== 'PGRST116') console.error('Error fetching config:', error)
-    else if (data) setConfig(data)
-  }
-
-  const handleSaveConfig = async () => {
-    setIsSavingConfig(true)
-    const configData = {
-      open_time: config.open_time,
-      close_time: config.close_time,
-      open_days: config.open_days,
-      cancel_limit_hours: config.cancel_limit_hours,
-      closed_dates: config.closed_dates,
-      user_id: user?.id,
-    }
-
-    const { error } = await supabase.from('config_styllus').upsert(configData, { onConflict: 'user_id' })
-    if (error) console.error('Error saving config:', error)
-    else alert('Configurações salvas com sucesso!')
-    setIsSavingConfig(false)
-  }
-
-  const toggleDay = (dayIndex: number) => {
-    setConfig((prev: any) => {
-      const currentOpenDays = Array.isArray(prev.open_days) ? prev.open_days : [];
-      const newOpenDays = currentOpenDays.includes(dayIndex)
-        ? currentOpenDays.filter((d: number) => d !== dayIndex)
-        : [...currentOpenDays, dayIndex];
-      return { ...prev, open_days: newOpenDays.sort((a: number, b: number) => a - b) };
-    });
-  };
-
-  const addClosedDate = (dateStr: string) => {
-    if (!dateStr) return
-    setConfig((prev: any) => {
-      const currentClosedDates = Array.isArray(prev.closed_dates) ? prev.closed_dates : [];
-      if (currentClosedDates.includes(dateStr)) return prev;
-      return { ...prev, closed_dates: [...currentClosedDates, dateStr].sort() };
-    });
-  };
-
-  const removeClosedDate = (dateStr: string) => {
-    setConfig((prev: any) => {
-      const currentClosedDates = Array.isArray(prev.closed_dates) ? prev.closed_dates : [];
-      return { ...prev, closed_dates: currentClosedDates.filter((d: string) => d !== dateStr) };
-    });
-  };
 
   // --- METRICS LOGIC ---
   const [metricsLoading, setMetricsLoading] = useState(false)
-  const [metricDateStart, setMetricDateStart] = useState(format(startOfMonth(new Date()), 'yyyy-MM-dd'))
-  const [metricDateEnd, setMetricDateEnd] = useState(format(endOfDay(new Date()), 'yyyy-MM-dd'))
-  const [metricPreset, setMetricPreset] = useState('month')
-  const [metricCompare, setMetricCompare] = useState(false)
-  const [metricsData, setMetricsData] = useState<any>({
-    summary: {},
-    daily: [],
-    topServices: [],
-    monthly: []
-  })
-
-  useEffect(() => {
-    if (activeTab === 'metrics') {
-      fetchMetrics()
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [metricDateStart, metricDateEnd, metricCompare, activeTab])
+  const [metricsData, setMetricsData] = useState<any>({ daily: [], monthly: [], topServices: [], summary: {}, compSummary: {} })
+  const [metricDateStart, setMetricDateStart] = useState(() => format(startOfMonth(new Date()), 'yyyy-MM-dd'))
+  const [metricDateEnd, setMetricDateEnd] = useState(() => format(new Date(), 'yyyy-MM-dd'))
+  const [metricCompare, setMetricCompare] = useState(true)
+  const [metricPreset, setMetricPreset] = useState<string>('month')
 
   const applyMetricPreset = (preset: string) => {
+    const now = new Date()
     setMetricPreset(preset)
-    const today = new Date()
-    let start: Date, end: Date
-
     switch (preset) {
       case '7d':
-        start = subDays(today, 6)
-        end = today
+        setMetricDateStart(format(subDays(now, 6), 'yyyy-MM-dd'))
+        setMetricDateEnd(format(now, 'yyyy-MM-dd'))
         break
       case '30d':
-        start = subDays(today, 29)
-        end = today
+        setMetricDateStart(format(subDays(now, 29), 'yyyy-MM-dd'))
+        setMetricDateEnd(format(now, 'yyyy-MM-dd'))
         break
       case 'month':
-        start = startOfMonth(today)
-        end = today
+        setMetricDateStart(format(startOfMonth(now), 'yyyy-MM-dd'))
+        setMetricDateEnd(format(now, 'yyyy-MM-dd'))
         break
-      case 'lastMonth':
-        start = startOfMonth(subMonths(today, 1))
-        end = endOfMonth(subMonths(today, 1))
+      case 'lastMonth': {
+        const lm = subMonths(now, 1)
+        setMetricDateStart(format(startOfMonth(lm), 'yyyy-MM-dd'))
+        setMetricDateEnd(format(endOfMonth(lm), 'yyyy-MM-dd'))
         break
+      }
       case '6m':
-        start = subMonths(startOfMonth(today), 5)
-        end = today
+        setMetricDateStart(format(subMonths(now, 5), 'yyyy-MM-dd'))
+        setMetricDateEnd(format(now, 'yyyy-MM-dd'))
         break
-      default:
-        start = startOfMonth(today)
-        end = today
     }
-    setMetricDateStart(format(start, 'yyyy-MM-dd'))
-    setMetricDateEnd(format(end, 'yyyy-MM-dd'))
   }
+
+  useEffect(() => {
+    if (activeTab === 'metrics' && metricDateStart && metricDateEnd) {
+      fetchMetrics()
+    }
+  }, [activeTab, metricDateStart, metricDateEnd, metricCompare])
 
   const fetchMetrics = async () => {
     setMetricsLoading(true)
     try {
-      const { data, error } = await supabase.functions.invoke('get-metrics', {
-        body: {
-          startDate: metricDateStart,
-          endDate: metricDateEnd,
-          compare: metricCompare,
-          userId: user?.id
+      const [sY, sM, sD] = metricDateStart.split('-').map(Number)
+      const [eY, eM, eD] = metricDateEnd.split('-').map(Number)
+      const rangeStart = startOfDay(new Date(sY, sM - 1, sD))
+      const rangeEnd = endOfDay(new Date(eY, eM - 1, eD))
+      const rangeDays = differenceInDays(rangeEnd, rangeStart) + 1
+
+      // Calculate comparison period (same duration, immediately before)
+      const compEnd = subDays(rangeStart, 1)
+      const compStart = subDays(compEnd, rangeDays - 1)
+
+      // Fetch all bookings for both periods at once
+      const fetchStart = metricCompare ? startOfDay(compStart) : rangeStart
+
+      const { data: allBookings, error } = await supabase
+        .from('bookings_styllus')
+        .select('start_time, status, service_id, services_styllus(name, price)')
+        .gte('start_time', fetchStart.toISOString())
+        .lte('start_time', rangeEnd.toISOString())
+
+      if (error) throw error
+
+      const bookings = allBookings || []
+
+      // Split into current and comparison periods
+      const currentBookings = bookings.filter((b: any) => {
+        const d = parseISO(b.start_time)
+        return isWithinInterval(d, { start: rangeStart, end: rangeEnd })
+      })
+      const compBookings = metricCompare ? bookings.filter((b: any) => {
+        const d = parseISO(b.start_time)
+        return isWithinInterval(d, { start: startOfDay(compStart), end: endOfDay(compEnd) })
+      }) : []
+
+      const confirmed = currentBookings.filter((b: any) => b.status === 'confirmed')
+      const canceled = currentBookings.filter((b: any) => b.status === 'canceled')
+      const compConfirmed = compBookings.filter((b: any) => b.status === 'confirmed')
+
+      // KPIs
+      const totalRev = confirmed.reduce((s: number, b: any) => s + (Number(b.services_styllus?.price) || 0), 0)
+      const totalBookingsCount = confirmed.length
+      const canceledCount = canceled.length
+      const totalAll = currentBookings.length
+      const cancelRate = totalAll > 0 ? (canceledCount / totalAll) * 100 : 0
+      const ticketMedio = totalBookingsCount > 0 ? totalRev / totalBookingsCount : 0
+
+      // Comparison KPIs
+      const compRev = compConfirmed.reduce((s: number, b: any) => s + (Number(b.services_styllus?.price) || 0), 0)
+      const compBookingsCount = compConfirmed.length
+      const compTicket = compBookingsCount > 0 ? compRev / compBookingsCount : 0
+      const compCancelRate = compBookings.length > 0 ? (compBookings.filter((b: any) => b.status === 'canceled').length / compBookings.length) * 100 : 0
+
+      const pct = (curr: number, prev: number) => prev > 0 ? ((curr - prev) / prev * 100) : (curr > 0 ? 100 : 0)
+
+      // Top services
+      const svcMap: Record<string, { name: string; count: number; revenue: number }> = {}
+      confirmed.forEach((b: any) => {
+        const key = b.service_id || 'unknown'
+        if (!svcMap[key]) svcMap[key] = { name: b.services_styllus?.name || 'Desconhecido', count: 0, revenue: 0 }
+        svcMap[key].count++
+        svcMap[key].revenue += Number(b.services_styllus?.price) || 0
+      })
+      const topServices = Object.values(svcMap)
+        .sort((a, b) => b.revenue - a.revenue)
+        .slice(0, 6)
+        .map(s => ({ name: s.name, Receita: s.revenue, Agendamentos: s.count }))
+
+      const topServiceName = topServices.length > 0 ? topServices[0].name : 'N/A'
+
+      // Daily chart data (current period)
+      const days = eachDayOfInterval({ start: rangeStart, end: rangeEnd })
+      const dailyData = days.map(day => {
+        const dayBookings = confirmed.filter((b: any) => isSameDay(parseISO(b.start_time), day))
+        const revenue = dayBookings.reduce((sum: number, b: any) => sum + (Number(b.services_styllus?.price) || 0), 0)
+        return {
+          name: rangeDays <= 14
+            ? format(day, 'EEE dd', { locale: ptBR })
+            : format(day, 'dd/MM', { locale: ptBR }),
+          Receita: revenue,
+          Agendamentos: dayBookings.length,
         }
       })
 
-      if (error) throw error
-      setMetricsData(data)
-    } catch (error) {
-      console.error('Error fetching metrics:', error)
-      setMetricsData({ summary: {}, daily: [], topServices: [], monthly: [] })
+      // Monthly chart data (if range > 31 days)
+      const months = eachMonthOfInterval({ start: rangeStart, end: rangeEnd })
+      const monthlyData = months.length > 1
+        ? months.map(month => {
+            const monthStr = format(month, 'yyyy-MM')
+            const monthBookings = confirmed.filter((b: any) => b.start_time.startsWith(monthStr))
+            const revenue = monthBookings.reduce((sum: number, b: any) => sum + (Number(b.services_styllus?.price) || 0), 0)
+            return {
+              name: format(month, 'MMM yy', { locale: ptBR }),
+              Receita: revenue,
+              Agendamentos: monthBookings.length,
+            }
+          })
+        : []
+
+      setMetricsData({
+        daily: dailyData,
+        monthly: monthlyData,
+        topServices,
+        summary: {
+          totalRevenue: totalRev,
+          totalBookings: totalBookingsCount,
+          ticketMedio,
+          cancelRate,
+          topService: topServiceName,
+          revGrowth: pct(totalRev, compRev).toFixed(1),
+          bookGrowth: pct(totalBookingsCount, compBookingsCount).toFixed(1),
+          ticketGrowth: pct(ticketMedio, compTicket).toFixed(1),
+          cancelGrowth: (cancelRate - compCancelRate).toFixed(1),
+        },
+      })
+    } catch (err: any) {
+      console.error('Erro ao buscar métricas:', err.message)
     } finally {
       setMetricsLoading(false)
     }
   }
 
+  // --- LOGOUT ---
+  const handleLogout = async () => {
+    try { await supabase.auth.signOut() } catch (e) {} 
+    finally { logout(); window.location.href = '/' }
+  }
+
   // --- WHATSAPP LOGIC ---
+  // Helper: get WhatsApp config directly from DB (avoids race with config state)
+  const getWaConfig = async () => {
+    const empresaId = process.env.NEXT_PUBLIC_EMPRESA_ID!
+    const { data } = await supabase
+      .from('business_config_styllus')
+      .select('evolution_instance_id, apikey_id')
+      
+      .limit(1)
+      .single()
+    return data
+  }
+
   const handleWaFetchInstances = async () => {
     setWaLoading('fetch')
     setWaError(null)
+    setWaQrCode(null)
+    setWaConnectingInstance(null)
     try {
-      const { data, error } = await supabase.functions.invoke('whatsapp-instances', {
-        body: { action: 'list', userId: user?.id }
-      })
-      if (error) throw error
-      setWaInstances(data.instances || [])
+      const waConfig = await getWaConfig()
+      const instanceId = waConfig?.evolution_instance_id || waConfig?.apikey_id
+      if (!instanceId) throw new Error('Instância do WhatsApp não configurada. Preencha o campo "evolution_instance_id" nas Configurações.')
+
+      const res = await fetch(`https://n8n.mundoai.com.br/webhook/instancia?instance=${instanceId}&apikey=${waConfig?.apikey_id || ''}`)
+      if (!res.ok) throw new Error(`Erro ${res.status}: ${res.statusText}`)
+      const payload = await res.json()
+      
+      let list = []
+      if (payload.success && Array.isArray(payload.data)) {
+        list = payload.data
+      } else if (Array.isArray(payload)) {
+        list = payload
+      } else {
+        list = [payload]
+      }
+
+      const normalized = list.map((item: any) => ({
+        instanceName: item.instanceName || item.instance?.instanceName || item.name || 'Desconhecido',
+        state: (item.state || item.instance?.state || item.status || item.connectionStatus || 'unknown').toLowerCase(),
+        ...item,
+      }))
+      
+      setWaInstances(normalized)
       setWaLastUpdated(new Date())
-    } catch (error: any) {
-      console.error('Error fetching WA instances:', error)
-      setWaError(error.message || 'Erro ao buscar instâncias do WhatsApp.')
+    } catch (err: any) {
+      setWaError(err.message || 'Erro ao consultar instâncias.')
+      setWaInstances([])
     } finally {
       setWaLoading(null)
     }
   }
 
-  const handleWaConnect = async (instanceName: string) => {
+  const handleWaConnect = async (instanceName?: string) => {
     setWaLoading('connect')
     setWaError(null)
     setWaQrCode(null)
     try {
-      const { data, error } = await supabase.functions.invoke('whatsapp-instances', {
-        body: { action: 'connect', instanceName, userId: user?.id }
-      })
-      if (error) throw error
-      if (data.qr) {
-        setWaQrCode(data.qr)
-      } else {
-        alert('Instância conectada ou QR Code não gerado. Tente atualizar.')
-        handleWaFetchInstances()
+      const waConfig = await getWaConfig()
+      const instanceId = waConfig?.evolution_instance_id || waConfig?.apikey_id
+      if (!instanceId) throw new Error('Instância não configurada.')
+
+      const payload = { 
+        instanceName: instanceId, 
+        apikey_id: waConfig?.apikey_id 
       }
-    } catch (error: any) {
-      console.error('Error connecting WA instance:', error)
-      setWaError(error.message || 'Erro ao conectar instância do WhatsApp.')
+      const res = await fetch('https://n8n.mundoai.com.br/webhook/conectar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      if (!res.ok) throw new Error(`Erro ${res.status}: ${res.statusText}`)
+      const contentType = res.headers.get('content-type') || ''
+      if (contentType.includes('image')) {
+        const blob = await res.blob()
+        const url = URL.createObjectURL(blob)
+        setWaQrCode(url)
+      } else {
+        const data = await res.json()
+        const qrBase64 = data.qrcode || data.qr || data.base64 || (data.data && data.data.qrcode) || (data.data && data.data.base64)
+        if (qrBase64) {
+          const src = qrBase64.startsWith('data:') ? qrBase64 : `data:image/png;base64,${qrBase64}`
+          setWaQrCode(src)
+        } else {
+          await handleWaFetchInstances()
+        }
+      }
+    } catch (err: any) {
+      setWaError(err.message || 'Erro ao conectar.')
     } finally {
       setWaLoading(null)
-      setWaConnectingInstance(null)
     }
   }
 
-  const handleWaDisconnect = async (instanceName: string) => {
-    if (!confirm(`Tem certeza que deseja desconectar a instância "${instanceName}"?`)) return
+  const handleWaDisconnect = async (instanceName?: string) => {
+    if (!confirm('Tem certeza que deseja desconectar o WhatsApp?')) return
     setWaLoading('disconnect')
     setWaError(null)
+    setWaQrCode(null)
+    setWaConnectingInstance(null)
     try {
-      const { data, error } = await supabase.functions.invoke('whatsapp-instances', {
-        body: { action: 'disconnect', instanceName, userId: user?.id }
+      const waConfig = await getWaConfig()
+      const instanceId = waConfig?.evolution_instance_id || waConfig?.apikey_id
+      if (!instanceId) throw new Error('Instância não configurada.')
+
+      const payload = { 
+        instanceName: instanceId, 
+        apikey_id: waConfig?.apikey_id 
+      }
+      const res = await fetch('https://n8n.mundoai.com.br/webhook/desconectar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
       })
-      if (error) throw error
-      alert(data.message || 'Instância desconectada com sucesso.')
-      handleWaFetchInstances()
-    } catch (error: any) {
-      console.error('Error disconnecting WA instance:', error)
-      setWaError(error.message || 'Erro ao desconectar instância do WhatsApp.')
+      if (!res.ok) throw new Error(`Erro ${res.status}: ${res.statusText}`)
+      await res.json()
+      await handleWaFetchInstances()
+    } catch (err: any) {
+      setWaError(err.message || 'Erro ao desconectar.')
     } finally {
       setWaLoading(null)
     }
@@ -776,997 +1030,970 @@ export default function PainelStyllus() {
 
   const getWaTimeSinceUpdate = () => {
     if (!waLastUpdated) return ''
-    const diffSeconds = differenceInDays(new Date(), waLastUpdated)
-    if (diffSeconds === 0) return 'Atualizado há pouco'
-    if (diffSeconds === 1) return 'Atualizado ontem'
-    return `Atualizado há ${diffSeconds} dias`
+    const now = new Date()
+    const diffSec = Math.floor((now.getTime() - waLastUpdated.getTime()) / 1000)
+    if (diffSec < 5) return 'Atualizado agora'
+    if (diffSec < 60) return `Atualizado há ${diffSec}s`
+    const diffMin = Math.floor(diffSec / 60)
+    return `Atualizado há ${diffMin}min`
   }
 
-  // --- AGENDA LOGIC ---
-  const fetchAgenda = async (page: number) => {
-    setIsLoadingAgenda(true)
-    const ITEMS_PER_PAGE = 10
-    const from = page * ITEMS_PER_PAGE
-    const to = from + ITEMS_PER_PAGE - 1
+  // --- METRICS STATE ---
 
-    let query = supabase
-      .from('bookings_styllus')
-      .select('*, clients_styllus(*), barbers_styllus(name), services_styllus(name)')
-      .eq('user_id', user?.id)
-      .order('date', { ascending: true })
-      .order('time', { ascending: true })
-      .range(from, to)
-
-    const today = format(new Date(), 'yyyy-MM-dd')
-    const startOfCurrentWeek = format(startOfWeek(new Date(), { locale: ptBR }), 'yyyy-MM-dd')
-    const endOfCurrentWeek = format(endOfWeek(new Date(), { locale: ptBR }), 'yyyy-MM-dd')
-
-    if (agendaFilter === 'today') {
-      query = query.eq('date', today)
-    } else if (agendaFilter === 'week') {
-      query = query.gte('date', startOfCurrentWeek).lte('date', endOfCurrentWeek)
-    } else if (agendaFilter === 'future') {
-      query = query.gte('date', today)
-    } else if (agendaFilter === 'past') {
-      query = query.lt('date', today).order('date', { ascending: false })
-    } else if (agendaFilter === 'historyMonth') {
-      const start = format(startOfMonth(parseISO(historyMonth)), 'yyyy-MM-dd')
-      const end = format(endOfMonth(parseISO(historyMonth)), 'yyyy-MM-dd')
-      query = query.gte('date', start).lte('date', end).order('date', { ascending: false })
+  // Admin route guard
+  useEffect(() => {
+    if (!authLoading && (!user || profile?.role !== 'admin')) {
+      router.push('/')
     }
+  }, [authLoading, user, profile, router])
 
-    const { data, error, count } = await query.limit(ITEMS_PER_PAGE)
-
-    if (error) {
-      console.error('Error fetching agenda:', error)
-    } else {
-      if (page === 0) {
-        setAgendaBookings(data)
-      } else {
-        setAgendaBookings(prev => [...prev, ...data])
-      }
-      setHasMoreAgenda(count && count > to + 1)
-      setAgendaPage(page)
-    }
-    setIsLoadingAgenda(false)
-  }
-
-  const loadMoreAgenda = () => {
-    fetchAgenda(agendaPage + 1)
-  }
-
-  const handleBookingAction = async (bookingId: string, status: 'confirmed' | 'cancelled' | 'completed') => {
-    const { error } = await supabase.from('bookings_styllus').update({ status }).eq('id', bookingId)
-    if (error) console.error('Error updating booking status:', error)
-    else {
-      alert(`Agendamento ${status === 'confirmed' ? 'confirmado' : status === 'cancelled' ? 'cancelado' : 'concluído'}!`)
-      fetchAgenda(0) // Re-fetch agenda
-    }
-  }
-
-  const handleBookingDelete = async (bookingId: string) => {
-    if (!confirm('Tem certeza que deseja excluir este agendamento?')) return
-    const { error } = await supabase.from('bookings_styllus').delete().eq('id', bookingId)
-    if (error) console.error('Error deleting booking:', error)
-    else {
-      alert('Agendamento excluído!')
-      fetchAgenda(0) // Re-fetch agenda
-    }
-  }
-
-  const getBookingStatusColor = (status: string) => {
-    switch (status) {
-      case 'confirmed': return 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
-      case 'pending': return 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20'
-      case 'cancelled': return 'bg-red-500/10 text-red-500 border-red-500/20'
-      case 'completed': return 'bg-blue-500/10 text-blue-500 border-blue-500/20'
-      default: return 'bg-zinc-500/10 text-zinc-500 border-zinc-500/20'
-    }
-  }
-
-  const isBookingCancellable = (bookingDate: string, bookingTime: string) => {
-    if (!config?.cancel_limit_hours) return true // If no limit set, always cancellable
-    const bookingDateTime = parseISO(`${bookingDate}T${bookingTime}:00`)
-    const limitDateTime = subHours(bookingDateTime, config.cancel_limit_hours)
-    return isAfter(new Date(), limitDateTime)
-  }
-
-  // --- MAIN RENDER ---
   if (authLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-zinc-950 text-white">
-        <Loader2 className="w-10 h-10 animate-spin text-red-500" />
-      </div>
-    )
+    return <div className="min-h-screen bg-black flex items-center justify-center text-white">Carregando...</div>
+  }
+  if (!user || profile?.role !== 'admin') {
+    return <div className="min-h-screen bg-black flex items-center justify-center text-white">Acesso negado. Redirecionando...</div>
   }
 
-  if (!user) {
-    router.push('/')
-    return null
-  }
+  const NAV_ITEMS = [
+    { id: 'agenda', icon: Calendar, label: 'Agenda Geral' },
+    { id: 'quick', icon: Plus, label: 'Agendar Manual' },
+    { id: 'clients', icon: UserIcon, label: 'Clientes' },
+    { id: 'barbers', icon: Users, label: 'Colaboradores' },
+    { id: 'services', icon: Scissors, label: 'Serviços' },
+    { id: 'config', icon: Settings, label: 'Configurações' },
+    { id: 'metrics', icon: BarChart3, label: 'Métricas' },
+    { id: 'whatsapp', icon: Smartphone, label: 'WhatsApp' },
+  ] as const
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white flex flex-col lg:flex-row">
-      {/* Sidebar */}
-      <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-zinc-900 border-r border-zinc-800 p-6 flex flex-col transition-transform duration-300 ease-in-out ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 lg:static lg:flex-shrink-0`}>
-        <div className="flex items-center justify-between mb-8">
-          <h1 className="text-2xl font-bold text-red-500">Styllus Admin</h1>
-          <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setIsMobileMenuOpen(false)}>
-            <X className="w-5 h-5 text-zinc-400" />
-          </Button>
+    <div className="min-h-screen flex bg-black">
+      {/* SIDEBAR PC */}
+      <aside className="w-64 border-r border-zinc-800 bg-zinc-950 flex-col hidden md:flex shrink-0">
+        <div className="p-6 border-b border-zinc-800">
+          <h2 className="text-xl font-bold text-white tracking-tight"><span className="text-red-500">Painel</span>Styllus</h2>
         </div>
-
-        <nav className="flex-1 space-y-2">
-          <Button variant="ghost" className={`w-full justify-start text-lg font-medium ${activeTab === 'agenda' ? 'bg-zinc-800 text-red-500' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`} onClick={() => { setActiveTab('agenda'); setIsMobileMenuOpen(false) }}>
-            <Calendar className="w-5 h-5 mr-3" /> Agenda
-          </Button>
-          <Button variant="ghost" className={`w-full justify-start text-lg font-medium ${activeTab === 'quick' ? 'bg-zinc-800 text-red-500' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`} onClick={() => { setActiveTab('quick'); setIsMobileMenuOpen(false) }}>
-            <Plus className="w-5 h-5 mr-3" /> Encaixe Rápido
-          </Button>
-          <Button variant="ghost" className={`w-full justify-start text-lg font-medium ${activeTab === 'services' ? 'bg-zinc-800 text-red-500' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`} onClick={() => { setActiveTab('services'); setIsMobileMenuOpen(false) }}>
-            <Scissors className="w-5 h-5 mr-3" /> Serviços
-          </Button>
-          <Button variant="ghost" className={`w-full justify-start text-lg font-medium ${activeTab === 'barbers' ? 'bg-zinc-800 text-red-500' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`} onClick={() => { setActiveTab('barbers'); setIsMobileMenuOpen(false) }}>
-            <Users className="w-5 h-5 mr-3" /> Barbeiros
-          </Button>
-          <Button variant="ghost" className={`w-full justify-start text-lg font-medium ${activeTab === 'clients' ? 'bg-zinc-800 text-red-500' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`} onClick={() => { setActiveTab('clients'); setIsMobileMenuOpen(false) }}>
-            <UserIcon className="w-5 h-5 mr-3" /> Clientes
-          </Button>
-          <Button variant="ghost" className={`w-full justify-start text-lg font-medium ${activeTab === 'metrics' ? 'bg-zinc-800 text-red-500' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`} onClick={() => { setActiveTab('metrics'); setIsMobileMenuOpen(false) }}>
-            <BarChart3 className="w-5 h-5 mr-3" /> Métricas
-          </Button>
-          <Button variant="ghost" className={`w-full justify-start text-lg font-medium ${activeTab === 'whatsapp' ? 'bg-zinc-800 text-red-500' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`} onClick={() => { setActiveTab('whatsapp'); setIsMobileMenuOpen(false) }}>
-            <Smartphone className="w-5 h-5 mr-3" /> WhatsApp
-          </Button>
-          <Button variant="ghost" className={`w-full justify-start text-lg font-medium ${activeTab === 'config' ? 'bg-zinc-800 text-red-500' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'}`} onClick={() => { setActiveTab('config'); setIsMobileMenuOpen(false) }}>
-            <Settings className="w-5 h-5 mr-3" /> Configurações
+        
+        <nav className="flex-1 p-4 flex flex-col gap-2">
+          {NAV_ITEMS.map(item => (
+            <Button key={item.id} variant={activeTab === item.id ? 'default' : 'ghost'} className="justify-start shadow-none" onClick={() => setActiveTab(item.id)}>
+              <item.icon className="w-4 h-4 mr-3" /> {item.label}
+            </Button>
+          ))}
+          <Button variant="ghost" className="justify-start shadow-none text-zinc-500 hover:text-red-500 mt-auto" onClick={handleLogout}>
+            <LogOut className="w-4 h-4 mr-3" /> Sair
           </Button>
         </nav>
-
-        <div className="mt-auto pt-6 border-t border-zinc-800">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-full bg-zinc-700 flex items-center justify-center text-zinc-300 font-bold">
-              {profile?.full_name ? profile.full_name[0].toUpperCase() : user?.email?.[0].toUpperCase()}
-            </div>
-            <div>
-              <p className="font-medium text-white">{profile?.full_name || user?.email}</p>
-              <p className="text-sm text-zinc-400">{profile?.role || 'Admin'}</p>
-            </div>
-          </div>
-          <Button variant="ghost" className="w-full justify-start text-zinc-400 hover:bg-zinc-800 hover:text-white" onClick={logout}>
-            <LogOut className="w-5 h-5 mr-3" /> Sair
-          </Button>
-        </div>
       </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 p-6 lg:p-10 overflow-auto">
-        <div className="flex items-center justify-between mb-6 lg:hidden">
-          <h1 className="text-2xl font-bold text-red-500">Styllus Admin</h1>
-          <Button variant="ghost" size="icon" onClick={() => setIsMobileMenuOpen(true)}>
-            <Menu className="w-6 h-6 text-zinc-400" />
+      {/* MAIN CONTENT */}
+      <main className="flex-1 flex flex-col h-screen overflow-hidden relative">
+        {/* MOBILE HEADER */}
+        <header className="border-b border-zinc-800 bg-zinc-950 px-4 py-3 flex justify-between items-center md:hidden shrink-0 z-20 relative">
+          <div className="flex items-center gap-3">
+            <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="text-zinc-400 hover:text-white">
+              {isMobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+            </button>
+            <h1 className="text-lg font-bold text-white"><span className="text-red-500">Painel</span>Styllus</h1>
+          </div>
+          <Button variant="ghost" size="icon" onClick={handleLogout}>
+            <LogOut className="w-5 h-5 text-zinc-400" />
           </Button>
-        </div>
+        </header>
 
-        <div className="max-w-6xl mx-auto">
-          {/* AGENDA */}
-          {activeTab === 'agenda' && (
-            <div className="space-y-6">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <div>
-                  <h2 className="text-2xl font-bold">Agenda de Agendamentos</h2>
-                  <p className="text-zinc-400 text-sm">Gerencie os horários marcados pelos seus clientes.</p>
+        {/* MOBILE SIDEBAR DROPDOWN */}
+        {isMobileMenuOpen && (
+          <div className="absolute top-[60px] left-0 right-0 bg-zinc-950 border-b border-zinc-800 z-30 p-2 flex flex-col gap-1 md:hidden shadow-2xl">
+            {NAV_ITEMS.map(item => (
+              <Button key={item.id} variant={activeTab === item.id ? 'default' : 'ghost'} className="justify-start" onClick={() => {setActiveTab(item.id); setIsMobileMenuOpen(false)}}>
+                 <item.icon className="w-4 h-4 mr-3" /> {item.label}
+              </Button>
+            ))}
+          </div>
+        )}
+
+        <div className="flex-1 overflow-y-auto p-4 md:p-8 text-white">
+          <div className="max-w-5xl mx-auto space-y-6">
+            
+            {/* AGENDA TAB */}
+            {activeTab === 'agenda' && (
+              <div className="space-y-6">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                  <h2 className="text-2xl font-bold">Gestão de Agenda</h2>
+                  <div className="w-full sm:w-auto grid grid-cols-2 sm:flex bg-zinc-900 border border-zinc-800 rounded-lg p-1 gap-1 sm:gap-0">
+                    <button className={`w-full text-center px-2 py-1.5 text-sm rounded-md font-medium transition-colors ${agendaFilter === 'today' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-400 hover:text-zinc-200'}`} onClick={() => setAgendaFilter('today')}>Hoje</button>
+                    <button className={`w-full text-center px-2 py-1.5 text-sm rounded-md font-medium transition-colors ${agendaFilter === 'week' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-400 hover:text-zinc-200'}`} onClick={() => setAgendaFilter('week')}>Semana</button>
+                    <button className={`w-full text-center px-2 py-1.5 text-sm rounded-md font-medium transition-colors ${agendaFilter === 'future' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-400 hover:text-zinc-200'}`} onClick={() => setAgendaFilter('future')}>Futuros</button>
+                    <button className={`w-full text-center px-2 py-1.5 text-sm rounded-md font-medium transition-colors ${agendaFilter === 'past' ? 'bg-zinc-800 text-white shadow' : 'text-zinc-400 hover:text-zinc-200'}`} onClick={() => setAgendaFilter('past')}>Histórico</button>
+                  </div>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" className={agendaFilter === 'today' ? 'bg-red-600 border-red-500 text-white' : 'border-zinc-700 text-zinc-400 hover:bg-zinc-800'} onClick={() => setAgendaFilter('today')}>Hoje</Button>
-                  <Button variant="outline" className={agendaFilter === 'week' ? 'bg-red-600 border-red-500 text-white' : 'border-zinc-700 text-zinc-400 hover:bg-zinc-800'} onClick={() => setAgendaFilter('week')}>Esta Semana</Button>
-                  <Button variant="outline" className={agendaFilter === 'future' ? 'bg-red-600 border-red-500 text-white' : 'border-zinc-700 text-zinc-400 hover:bg-zinc-800'} onClick={() => setAgendaFilter('future')}>Próximos</Button>
-                  <Button variant="outline" className={agendaFilter === 'past' ? 'bg-red-600 border-red-500 text-white' : 'border-zinc-700 text-zinc-400 hover:bg-zinc-800'} onClick={() => setAgendaFilter('past')}>Anteriores</Button>
-                  <Input type="month" value={historyMonth} onChange={e => { setHistoryMonth(e.target.value); setAgendaFilter('historyMonth') }} className="bg-zinc-900 border-zinc-800 text-white" />
-                </div>
+
+                {agendaFilter === 'past' && (
+                  <div className="flex items-center gap-3 animate-in fade-in slide-in-from-top-1">
+                    <Label className="text-zinc-400 whitespace-nowrap">Selecione o Mês:</Label>
+                    <select 
+                      className="bg-zinc-900 border border-zinc-800 text-white text-sm rounded-lg px-3 py-2 w-48 focus:outline-none focus:ring-1 focus:ring-red-500"
+                      value={historyMonth}
+                      onChange={(e) => setHistoryMonth(e.target.value)}
+                    >
+                      {Array.from({ length: 12 }).map((_, i) => {
+                        const d = subMonths(new Date(), i)
+                        return (
+                          <option key={i} value={format(d, 'yyyy-MM')}>
+                            {format(d, 'MMMM yyyy', { locale: ptBR }).replace(/^\w/, c => c.toUpperCase())}
+                          </option>
+                        )
+                      })}
+                    </select>
+                  </div>
+                )}
+
+                {isLoadingAgenda ? <p className="text-zinc-500">Carregando...</p> : agendaBookings.length === 0 ? (
+                  <div className="text-center py-12 border border-zinc-800 rounded-2xl bg-zinc-900/30">
+                    <Calendar className="w-12 h-12 text-zinc-600 mx-auto mb-4" />
+                    <p className="text-zinc-400">Nenhum agendamento encontrado.</p>
+                  </div>
+                ) : (
+                  <div className="grid gap-3">
+                    {agendaBookings.map(booking => {
+                      const bDate = parseISO(booking.start_time)
+                      const isSelected = selectedBooking?.id === booking.id
+                      const isActive = booking.status === 'confirmed'
+                      // group by days visually when looking at 'week' or 'past' ? 
+                      // Simple approach: just show date in card if not today
+                      
+                      return (
+                        <div key={booking.id}>
+                          <Card 
+                            className={`cursor-pointer transition-colors border-zinc-800 hover:bg-zinc-900/80 ${isSelected ? 'bg-zinc-900 ring-1 ring-zinc-700' : 'bg-zinc-950/50'} ${!isActive && 'opacity-60'}`}
+                            onClick={() => handleOpenBookingDetails(booking)}
+                          >
+                            <div className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                              <div className="flex items-center gap-4">
+                                <div className="bg-zinc-900 rounded-lg p-3 text-center min-w-[80px]">
+                                  {agendaFilter !== 'today' && <p className="text-xs text-zinc-500 uppercase">{format(bDate, 'dd MMM')}</p>}
+                                  <p className="text-xl font-bold text-white">{format(bDate, 'HH:mm')}</p>
+                                </div>
+                                <div>
+                                  <h4 className="font-bold text-white text-lg">
+                                    {booking.guest_name ? booking.guest_name : (booking.profiles?.full_name || 'Desconhecido')}
+                                  </h4>
+                                  <div className="text-zinc-400 text-sm flex flex-col gap-1 mt-1">
+                                    <span className="flex items-center gap-2">
+                                      <Scissors className="w-3 h-3" /> {booking.services_styllus?.name}
+                                    </span>
+                                    {booking.barbers_styllus?.name && (
+                                      <span className="flex items-center gap-2 text-xs text-zinc-500">
+                                        <UserIcon className="w-3 h-3" /> {booking.barbers_styllus.name}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-4 w-full sm:w-auto mt-2 sm:mt-0 justify-between sm:justify-end">
+                                <span className={`px-2 py-1 rounded text-xs font-medium uppercase ${isActive ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
+                                  {isActive ? 'Confirmado' : 'Cancelado'}
+                                </span>
+                                {isActive && (
+                                  <Button variant="ghost" size="sm" className="text-zinc-500 hover:text-red-500 hover:bg-red-500/10 h-8" onClick={(e) => handleCancelAgendaBooking(e, booking.id)}>
+                                    Cancelar
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+                          </Card>
+                          
+                          {/* Expanded Details */}
+                          {isSelected && (
+                            <div className="bg-zinc-900/80 border border-zinc-800 rounded-b-xl -mt-2 pt-6 pb-4 px-6 mb-4 animate-in slide-in-from-top-2">
+                              {selectedClientDetails ? (
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                                  <div>
+                                    <p className="text-xs text-zinc-500 mb-1">Telefone</p>
+                                    <p className="text-sm font-medium text-white flex items-center gap-2">
+                                      <Phone className="w-3 h-3 text-zinc-400" /> {formatPhone(booking.guest_phone || booking.profiles?.phone) || 'Não informado'}
+                                    </p>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs text-zinc-500 mb-1">Total de Cortes ({isActive ? 'Com este' : ''})</p>
+                                    <p className="text-sm font-medium text-white">{selectedClientDetails.totalCuts}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs text-zinc-500 mb-1">Total Gasto na Barbearia</p>
+                                    <p className="text-sm font-medium text-emerald-400">{selectedClientDetails.totalSpent}</p>
+                                  </div>
+                                  <div className="sm:col-span-3 pt-4 border-t border-zinc-800/50">
+                                    <p className="text-xs text-zinc-500 mb-1">Cliente desde</p>
+                                    <p className="text-sm font-medium text-white">{selectedClientDetails.registeredSince}</p>
+                                  </div>
+                                </div>
+                              ) : (
+                                <p className="text-sm text-zinc-500">Carregando detalhes do cliente...</p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+                
+                {hasMoreAgenda && agendaBookings.length > 0 && (
+                  <div className="flex justify-center mt-6">
+                    <Button variant="outline" onClick={loadMoreAgenda} disabled={isLoadingAgenda} className="border-zinc-800 bg-zinc-950 text-white hover:bg-zinc-900 px-8">
+                       {isLoadingAgenda ? 'Carregando...' : 'Carregar Mais'}
+                    </Button>
+                  </div>
+                )}
               </div>
+            )}
 
-              {isLoadingAgenda && agendaBookings.length === 0 ? (
-                <div className="flex justify-center items-center py-16">
-                  <div className="w-8 h-8 border-4 border-red-500 border-t-transparent rounded-full animate-spin" />
+            {/* QUICK BOOKING */}
+            {activeTab === 'quick' && (
+              <div className="space-y-6">
+                <div>
+                  <h2 className="text-2xl font-bold">Agendamento Manual</h2>
+                  <p className="text-zinc-400 text-sm">Para clientes que chegam sem horário no aplicativo (Balcão).</p>
                 </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {agendaBookings.map((booking: any) => (
-                    <Card key={booking.id} className="border-zinc-800 bg-zinc-950 p-5">
-                      <div className="flex justify-between items-start mb-3">
-                        <h3 className="text-lg font-bold text-white">{booking.clients_styllus?.full_name || 'Cliente Desconhecido'}</h3>
-                        <span className={`text-xs font-medium px-2 py-1 rounded-full border ${getBookingStatusColor(booking.status)}`}>
-                          {booking.status === 'confirmed' && 'Confirmado'}
-                          {booking.status === 'pending' && 'Pendente'}
-                          {booking.status === 'cancelled' && 'Cancelado'}
-                          {booking.status === 'completed' && 'Concluído'}
-                        </span>
+                <Card className="border-zinc-800 bg-zinc-950/50">
+                  <CardContent className="space-y-6 pt-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>Nome do Cliente *</Label>
+                        <Input placeholder="Ex: Carlos" value={quickName} onChange={e => setQuickName(e.target.value)} className="bg-zinc-900 border-zinc-800" />
                       </div>
-                      <p className="text-zinc-400 text-sm mb-2 flex items-center gap-2"><Calendar className="w-4 h-4 text-zinc-500" /> {format(parseISO(booking.date), 'dd/MM/yyyy', { locale: ptBR })} às {booking.time}</p>
-                      <p className="text-zinc-400 text-sm mb-2 flex items-center gap-2"><Scissors className="w-4 h-4 text-zinc-500" /> {booking.services_styllus?.name || 'Serviço Desconhecido'}</p>
-                      <p className="text-zinc-400 text-sm mb-2 flex items-center gap-2"><Users className="w-4 h-4 text-zinc-500" /> {booking.barbers_styllus?.name || 'Barbeiro Não Atribuído'}</p>
-                      <p className="text-emerald-500 font-bold text-md flex items-center gap-2"><ArrowUpRight className="w-4 h-4" /> R$ {booking.price.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
-
-                      <div className="flex gap-2 mt-4 border-t border-zinc-800 pt-4">
-                        {booking.status === 'pending' && (
-                          <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 flex-1" onClick={() => handleBookingAction(booking.id, 'confirmed')}>Confirmar</Button>
-                        )}
-                        {booking.status === 'confirmed' && (
-                          <Button size="sm" className="bg-blue-600 hover:bg-blue-700 flex-1" onClick={() => handleBookingAction(booking.id, 'completed')}>Concluir</Button>
-                        )}
-                        {booking.status !== 'cancelled' && isBookingCancellable(booking.date, booking.time) && (
-                          <Button size="sm" variant="outline" className="border-red-500 text-red-500 hover:bg-red-500/10 flex-1" onClick={() => handleBookingAction(booking.id, 'cancelled')}>Cancelar</Button>
-                        )}
-                        <Button size="sm" variant="ghost" className="text-zinc-500 hover:text-red-500" onClick={() => handleBookingDelete(booking.id)}>
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+                      <div className="space-y-2">
+                        <Label>Telefone / WhatsApp (Opcional)</Label>
+                        <Input placeholder="(11) 99999-9999" value={quickPhone} onChange={e => setQuickPhone(maskPhoneInput(e.target.value))} className="bg-zinc-900 border-zinc-800" maxLength={15} />
                       </div>
-                    </Card>
-                  ))}
-                  {agendaBookings.length === 0 && (
-                    <div className="col-span-full text-center p-8 border border-zinc-800 border-dashed rounded-xl">
-                      <p className="text-zinc-500">Nenhum agendamento encontrado para este período.</p>
                     </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>Serviço *</Label>
+                        <select 
+                          value={quickServiceId} 
+                          onChange={e => setQuickServiceId(e.target.value)}
+                          className="flex h-10 w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500"
+                        >
+                          <option value="">Selecione...</option>
+                          {services
+                            .filter(s => barbersList.some((b: any) => b.active !== false && b.barber_services_styllus?.some((bs: any) => bs.service_id === s.id)))
+                            .map(s => <option key={s.id} value={s.id}>{s.name} - R$ {s.price}</option>)}
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Barbeiro (Opcional)</Label>
+                        <select 
+                          value={quickBarberId} 
+                          onChange={e => setQuickBarberId(e.target.value)}
+                          className="flex h-10 w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-white focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500"
+                        >
+                          <option value="">Qualquer Barbeiro...</option>
+                          {barbersList.filter((b: any) => b.active !== false).map((b: any) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-4 pt-4 border-t border-zinc-800/50">
+                      <div className="space-y-2 max-w-[200px]">
+                        <Label className="flex items-center gap-2"><Calendar className="w-4 h-4 text-zinc-500" /> Data *</Label>
+                        <Input 
+                          type="date" 
+                          min={format(new Date(), 'yyyy-MM-dd')} 
+                          value={quickDate} 
+                          onChange={e => {
+                            const val = e.target.value
+                            if (config?.closed_dates?.includes(val)) {
+                              alert('A barbearia estará fechada nesta data.')
+                              setQuickDate('')
+                              return
+                            }
+                            if (val && config?.open_days) {
+                               const [y, m, d] = val.split('-').map(Number)
+                               const dayOfWeek = new Date(y, m - 1, d).getDay()
+                               if (!config.open_days.includes(dayOfWeek)) {
+                                  alert('A barbearia não abre neste dia da semana.')
+                                  setQuickDate('')
+                                  return
+                               }
+                            }
+                            setQuickDate(val)
+                          }} 
+                          className="bg-zinc-900 border-zinc-800" 
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="flex items-center gap-2"><Clock className="w-4 h-4 text-zinc-500" /> Horário *</Label>
+                        {!quickDate ? <p className="text-sm text-zinc-500 italic">Selecione uma data primeiro</p> : (
+                          generateQuickTimeSlots().length === 0 ? (
+                            <p className="text-sm text-red-500">Nenhum horário disponível para esta data hoje.</p>
+                          ) : (
+                            <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-8 gap-2">
+                              {generateQuickTimeSlots().map(slot => {
+                                const isOccupied = occupiedSlots.includes(slot)
+                                return (
+                                <button
+                                  key={slot}
+                                  type="button"
+                                  onClick={() => !isOccupied && setQuickTime(slot)}
+                                  disabled={isOccupied}
+                                  className={`py-2 text-sm rounded-lg border transition-all ${
+                                    isOccupied
+                                      ? 'bg-zinc-950 border-zinc-900 text-zinc-600 cursor-not-allowed opacity-50 line-through'
+                                      : quickTime === slot
+                                      ? 'bg-red-500 border-red-500 text-white font-medium'
+                                      : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                                  }`}
+                                >
+                                  {slot}
+                                </button>
+                                )
+                              })}
+                            </div>
+                          )
+                        )}
+                      </div>
+                    </div>
+
+                    <Button className="w-full mt-4 bg-red-600 hover:bg-red-700" onClick={handleConfirmQuickBooking} disabled={isQuickBooking}>
+                      {isQuickBooking ? 'Salvando...' : 'Confirmar Encaixe'}
+                    </Button>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+
+            {/* SERVICES GESTÃO */}
+            {activeTab === 'services' && (
+              <div className="space-y-6">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                  <div>
+                    <h2 className="text-2xl font-bold">Serviços Oferecidos</h2>
+                    <p className="text-zinc-400 text-sm">Gerencie os cortes e os valores cobrados.</p>
+                  </div>
+                  {!isCreatingService && (
+                    <Button onClick={() => { setIsCreatingService(true); setEditingServiceId(null); setServiceForm({name:'', price:'', duration:'', description:'', image_url:''}) }} className="bg-red-600 hover:bg-red-700 shrink-0">
+                      <Plus className="w-4 h-4 mr-2" /> Novo Serviço
+                    </Button>
                   )}
                 </div>
-              )}
 
-              {hasMoreAgenda && (
-                <div className="flex justify-center mt-6">
-                  <Button variant="outline" onClick={loadMoreAgenda} disabled={isLoadingAgenda} className="border-zinc-800 bg-zinc-950 text-white hover:bg-zinc-900 px-8">
-                    {isLoadingAgenda ? 'Carregando...' : 'Carregar Mais'}
-                  </Button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* QUICK BOOKING */}
-          {activeTab === 'quick' && (
-            <div className="space-y-6 max-w-2xl">
-              <div>
-                <h2 className="text-2xl font-bold">Encaixe Rápido</h2>
-                <p className="text-zinc-400 text-sm">Crie um agendamento rapidamente para um cliente.</p>
-              </div>
-
-              <Card className="border-zinc-700 bg-zinc-950">
-                <CardHeader>
-                  <CardTitle>Novo Agendamento</CardTitle>
-                  <CardDescription>Preencha os dados para agendar um horário.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-2">
-                      <Label>Nome do Cliente *</Label>
-                      <Input value={quickName} onChange={e => setQuickName(e.target.value)} className="bg-zinc-900 border-zinc-800" placeholder="Nome Completo" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Telefone do Cliente *</Label>
-                      <Input value={quickPhone} onChange={e => setQuickPhone(maskPhoneInput(e.target.value))} className="bg-zinc-900 border-zinc-800" placeholder="(XX) XXXXX-XXXX" />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Serviço *</Label>
-                    <select value={quickServiceId} onChange={e => setQuickServiceId(e.target.value)} className="flex h-10 w-full items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm ring-offset-zinc-950 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50">
-                      <option value="">Selecione um serviço</option>
-                      {services.map(service => (
-                        <option key={service.id} value={service.id}>{service.name} (R$ {service.price})</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Barbeiro *</Label>
-                    <select value={quickBarberId} onChange={e => setQuickBarberId(e.target.value)} className="flex h-10 w-full items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm ring-offset-zinc-950 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50">
-                      <option value="">Selecione um barbeiro</option>
-                      {barbersList.filter(b => b.active).map(barber => (
-                        <option key={barber.id} value={barber.id}>{barber.name}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-2">
-                      <Label className="flex items-center gap-2"><Calendar className="w-4 h-4 text-zinc-500" /> Data *</Label>
-                      <Input
-                        type="date"
-                        value={quickDate}
-                        onChange={e => {
-                          const val = e.target.value
-                          if (val && config?.open_days) {
-                             const [y, m, d] = val.split('-').map(Number)
-                             const dayOfWeek = new Date(y, m - 1, d).getDay()
-                             const openDaysArr = Array.isArray(config.open_days) 
-                               ? config.open_days.map(Number) 
-                               : typeof config.open_days === 'string' 
-                                 ? JSON.parse(config.open_days).map(Number) 
-                                 : []
-                             if (!openDaysArr.includes(dayOfWeek)) {
-                                alert('A barbearia não abre neste dia da semana.')
-                                setQuickDate('')
-                                return
-                             }
-                          }
-                          setQuickDate(val)
-                        }}
-                        className="bg-zinc-900 border-zinc-800"
-                        min={format(new Date(), 'yyyy-MM-dd')}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label className="flex items-center gap-2"><Clock className="w-4 h-4 text-zinc-500" /> Horário *</Label>
-                      {!quickDate ? <p className="text-sm text-zinc-500 italic">Selecione uma data primeiro</p> : (
-                        generateQuickTimeSlots().length === 0 ? (
-                          <p className="text-sm text-red-500">Nenhum horário disponível para esta data hoje.</p>
-                        ) : (
-                          <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-8 gap-2">
-                            {generateQuickTimeSlots().map(slot => {
-                              const isOccupied = occupiedSlots.includes(slot)
-                              return (
-                              <button
-                                key={slot}
-                                type="button"
-                                onClick={() => !isOccupied && setQuickTime(slot)}
-                                disabled={isOccupied}
-                                className={`py-2 text-sm rounded-lg border transition-all ${
-                                  isOccupied
-                                    ? 'bg-zinc-950 border-zinc-900 text-zinc-600 cursor-not-allowed opacity-50 line-through'
-                                    : quickTime === slot
-                                    ? 'bg-red-500 border-red-500 text-white font-medium'
-                                    : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
-                                }`}
-                              >
-                                {slot}
-                              </button>
-                              )
-                            })}
+                {isCreatingService && (
+                  <Card className="border-zinc-700 bg-zinc-950 shadow-2xl relative overflow-hidden">
+                    <CardHeader className="pb-4">
+                      <div className="flex justify-between items-start">
+                        <CardTitle>{editingServiceId ? 'Editar Serviço' : 'Novo Serviço'}</CardTitle>
+                        <Button variant="ghost" size="icon" onClick={() => setIsCreatingService(false)} className="h-8 w-8 hover:bg-zinc-800">
+                          <X className="w-4 h-4 text-zinc-400" />
+                        </Button>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-6">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="space-y-4">
+                          <div className="space-y-2">
+                            <Label>Nome do Serviço</Label>
+                            <Input value={serviceForm.name} onChange={e => setServiceForm({...serviceForm, name: e.target.value})} className="bg-zinc-900 border-zinc-800" />
                           </div>
-                        )
-                      )}
-                    </div>
-                  </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <Label>Preço (R$)</Label>
+                              <Input type="number" value={serviceForm.price} onChange={e => setServiceForm({...serviceForm, price: e.target.value})} className="bg-zinc-900 border-zinc-800" />
+                            </div>
+                            <div className="space-y-2">
+                              <Label>Duração (Minutos)</Label>
+                              <Input type="number" value={serviceForm.duration} onChange={e => setServiceForm({...serviceForm, duration: e.target.value})} className="bg-zinc-900 border-zinc-800" />
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Descrição</Label>
+                            <textarea 
+                              className="flex w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-white placeholder:text-zinc-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500 min-h-[80px]"
+                              value={serviceForm.description} onChange={e => setServiceForm({...serviceForm, description: e.target.value})}
+                              placeholder="Detalhes sobre o serviço..."
+                            />
+                          </div>
+                        </div>
 
-                  <Button className="w-full mt-4 bg-red-600 hover:bg-red-700" onClick={handleConfirmQuickBooking} disabled={isQuickBooking}>
-                    {isQuickBooking ? 'Salvando...' : 'Confirmar Encaixe'}
-                  </Button>
-                </CardContent>
-              </Card>
-            </div>
-          )}
+                        {/* Image Upload */}
+                        <div className="space-y-4">
+                          <Label>Imagem (Opcional, 1:1 Quadrada)</Label>
+                          <div className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-zinc-800 rounded-xl bg-zinc-900/50 hover:bg-zinc-900 transition-colors relative h-40">
+                            <input 
+                              type="file" accept="image/*" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" 
+                              onChange={(e) => { if(e.target.files && e.target.files[0]) setServiceImageFile(e.target.files[0]) }}
+                            />
+                            {serviceImageFile ? (
+                              <div className="text-center font-medium text-emerald-500">
+                                <CheckCircle className="w-8 h-8 mx-auto mb-2" />
+                                {serviceImageFile.name}
+                              </div>
+                            ) : serviceForm.image_url ? (
+                              <div className="absolute inset-0 p-2">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={serviceForm.image_url} alt="Current Preview" className="w-full h-full object-contain rounded-lg" />
+                              </div>
+                            ) : (
+                              <div className="text-center text-zinc-500">
+                                <ImageIcon className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                                <span className="text-sm">Clique para upload</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
 
-          {/* SERVICES GESTÃO */}
-          {activeTab === 'services' && (
-            <div className="space-y-6">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <div>
-                  <h2 className="text-2xl font-bold">Serviços Oferecidos</h2>
-                  <p className="text-zinc-400 text-sm">Gerencie os cortes e os valores cobrados.</p>
-                </div>
-                {!isCreatingService && (
-                  <Button onClick={() => { setIsCreatingService(true); setEditingServiceId(null); setServiceForm({name:'', price:'', duration:'', description:'', image_url:''}) }} className="bg-red-600 hover:bg-red-700 shrink-0">
-                    <Plus className="w-4 h-4 mr-2" /> Novo Serviço
-                  </Button>
-                )}
-              </div>
-
-              {isCreatingService && (
-                <Card className="border-zinc-700 bg-zinc-950 shadow-2xl relative overflow-hidden">
-                  <CardHeader className="pb-4">
-                    <div className="flex justify-between items-start">
-                      <CardTitle>{editingServiceId ? 'Editar Serviço' : 'Novo Serviço'}</CardTitle>
-                      <Button variant="ghost" size="icon" onClick={() => setIsCreatingService(false)} className="h-8 w-8 hover:bg-zinc-800">
-                        <X className="w-4 h-4 text-zinc-400" />
+                      <Button className="w-full bg-emerald-600 hover:bg-emerald-700" onClick={handleSaveService} disabled={isSavingService}>
+                        {isSavingService ? 'Salvando...' : <><Save className="w-4 h-4 mr-2" /> Guardar Alterações</>}
                       </Button>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-6">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <Label>Nome do Serviço</Label>
-                          <Input value={serviceForm.name} onChange={e => setServiceForm({...serviceForm, name: e.target.value})} className="bg-zinc-900 border-zinc-800" />
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <Label>Preço (R$)</Label>
-                            <Input type="number" value={serviceForm.price} onChange={e => setServiceForm({...serviceForm, price: e.target.value})} className="bg-zinc-900 border-zinc-800" />
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Duração (Minutos)</Label>
-                            <Input type="number" value={serviceForm.duration} onChange={e => setServiceForm({...serviceForm, duration: e.target.value})} className="bg-zinc-900 border-zinc-800" />
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Descrição</Label>
-                          <textarea 
-                            className="flex w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-white placeholder:text-zinc-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500 min-h-[80px]"
-                            value={serviceForm.description} onChange={e => setServiceForm({...serviceForm, description: e.target.value})}
-                            placeholder="Detalhes sobre o serviço..."
-                          />
-                        </div>
-                      </div>
-
-                      {/* Image Upload */}
-                      <div className="space-y-4">
-                        <Label>Imagem (Opcional, 1:1 Quadrada)</Label>
-                        <div className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-zinc-800 rounded-xl bg-zinc-900/50 hover:bg-zinc-900 transition-colors relative h-40">
-                          <input 
-                            type="file" accept="image/*" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" 
-                            onChange={(e) => { if(e.target.files && e.target.files[0]) setServiceImageFile(e.target.files[0]) }}
-                          />
-                          {serviceImageFile ? (
-                            <div className="text-center font-medium text-emerald-500">
-                              <CheckCircle className="w-8 h-8 mx-auto mb-2" />
-                              {serviceImageFile.name}
-                            </div>
-                          ) : serviceForm.image_url ? (
-                            <div className="absolute inset-0 p-2">
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={serviceForm.image_url} alt="Current Preview" className="w-full h-full object-contain rounded-lg" />
-                            </div>
-                          ) : (
-                            <div className="text-center text-zinc-500">
-                              <ImageIcon className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                              <span className="text-sm">Clique para upload</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    <Button className="w-full bg-emerald-600 hover:bg-emerald-700" onClick={handleSaveService} disabled={isSavingService}>
-                      {isSavingService ? 'Salvando...' : <><Save className="w-4 h-4 mr-2" /> Guardar Alterações</>}
-                    </Button>
-                  </CardContent>
-                </Card>
-              )}
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {services.map(service => (
-                  <Card key={service.id} className="border-zinc-800 bg-zinc-950 p-4">
-                    <div className="flex gap-4">
-                      {service.image_url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={service.image_url} alt={service.name} className="w-20 h-20 rounded-lg object-cover bg-zinc-900 shrink-0" />
-                      ) : (
-                        <div className="w-20 h-20 rounded-lg bg-zinc-900 flex items-center justify-center shrink-0">
-                          <Scissors className="w-8 h-8 text-zinc-700" />
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <h4 className="font-bold text-white truncate">{service.name}</h4>
-                        <p className="text-sm text-zinc-400 mt-1 line-clamp-1">{service.description || 'Sem descrição'}</p>
-                        <div className="flex items-center gap-3 mt-2">
-                          <span className="text-emerald-500 font-bold bg-emerald-500/10 px-2 py-0.5 rounded text-xs">R$ {service.price}</span>
-                          <span className="text-xs text-zinc-500 flex items-center gap-1"><Clock className="w-3 h-3"/> {service.duration}m</span>
-                        </div>
-                      </div>
-                      <div className="flex flex-col gap-2 shrink-0">
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-400 hover:text-white bg-zinc-900" onClick={() => handleEditService(service)}>
-                          <Edit className="w-4 h-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-400 hover:text-red-500 bg-zinc-900" onClick={() => handleDeleteService(service.id)}>
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </div>
+                    </CardContent>
                   </Card>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* COLABORADORES (BARBERS) */}
-          {activeTab === 'barbers' && (
-            <div className="space-y-6">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <div>
-                  <h2 className="text-2xl font-bold">Equipe de Barbeiros</h2>
-                  <p className="text-zinc-400 text-sm">Gerencie os profissionais e os serviços que cada uno realiza.</p>
-                </div>
-                {!isCreatingBarber && (
-                  <Button onClick={() => { setIsCreatingBarber(true); setEditingBarberId(null); setBarberForm({name:'', active:true, selectedServices:[], photo_url: ''}); setBarberImageFile(null) }} className="bg-red-600 hover:bg-red-700 shrink-0">
-                    <Plus className="w-4 h-4 mr-2" /> Novo Barbeiro
-                  </Button>
                 )}
-              </div>
 
-              {isCreatingBarber && (
-                <Card className="border-zinc-700 bg-zinc-950">
-                  <CardHeader className="pb-4">
-                    <div className="flex justify-between items-start">
-                      <CardTitle>{editingBarberId ? 'Editar Colaborador' : 'Adicionar Colaborador'}</CardTitle>
-                      <Button variant="ghost" size="icon" onClick={() => setIsCreatingBarber(false)} className="h-8 w-8 hover:bg-zinc-800">
-                        <X className="w-4 h-4 text-zinc-400" />
-                      </Button>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-6">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div className="space-y-2">
-                        <Label>Nome do Profissional</Label>
-                        <Input value={barberForm.name} onChange={e => setBarberForm({...barberForm, name: e.target.value})} className="bg-zinc-900 border-zinc-800" placeholder="Ex: João Ferreira" />
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <Label>Foto do Perfil (1:1 Quadrada)</Label>
-                        <div className="flex flex-col items-center justify-center p-3 border-2 border-dashed border-zinc-800 rounded-xl bg-zinc-900/50 hover:bg-zinc-900 transition-colors relative h-20">
-                          <input 
-                            type="file" accept="image/*" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" 
-                            onChange={(e) => { if(e.target.files && e.target.files[0]) setBarberImageFile(e.target.files[0]) }}
-                          />
-                          {barberImageFile ? (
-                            <div className="text-center font-medium text-emerald-500 flex items-center gap-2 text-sm">
-                              <CheckCircle className="w-4 h-4" />
-                              {barberImageFile.name}
-                            </div>
-                          ) : barberForm.photo_url ? (
-                            <div className="absolute inset-0 p-1 flex justify-center">
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={barberForm.photo_url} alt="Barber Preview" className="h-full object-contain rounded-full" />
-                            </div>
-                          ) : (
-                            <div className="text-center text-zinc-500 flex flex-col items-center">
-                              <ImageIcon className="w-4 h-4 mb-1 opacity-50" />
-                              <span className="text-xs">Upload de Foto</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-3 pt-4 border-t border-zinc-800/50">
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input 
-                          type="checkbox" 
-                          className="sr-only peer" 
-                          checked={barberForm.active} 
-                          onChange={e => setBarberForm({...barberForm, active: e.target.checked})}
-                        />
-                        <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
-                      </label>
-                      <span className={`text-sm font-medium ${barberForm.active ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {barberForm.active ? 'Ativo - Disponível para agendamentos' : 'Inativo - Não aparece para clientes'}
-                      </span>
-                    </div>
-
-                    <div className="space-y-3 pt-2">
-                      <Label>Serviços Realizados por este profissional</Label>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                        {services.map(s => (
-                          <div 
-                            key={s.id} 
-                            onClick={() => toggleServiceForBarber(s.id)}
-                            className={`p-3 border rounded-lg cursor-pointer flex items-center gap-3 transition-colors ${barberForm.selectedServices.includes(s.id) ? 'border-red-500 bg-red-500/10' : 'border-zinc-800 bg-zinc-900 hover:border-zinc-600'}`}
-                          >
-                            <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${barberForm.selectedServices.includes(s.id) ? 'bg-red-500 border-red-500' : 'border-zinc-600'}`}>
-                              {barberForm.selectedServices.includes(s.id) && <CheckCircle className="w-3 h-3 text-white" />}
-                            </div>
-                            <span className="text-sm font-medium text-white line-clamp-1">{s.name}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <Button className="w-full bg-emerald-600 hover:bg-emerald-700" onClick={handleSaveBarber} disabled={isSavingBarber}>
-                      {isSavingBarber ? 'Salvando...' : 'Salvar Barbeiro'}
-                    </Button>
-                  </CardContent>
-                </Card>
-              )}
-
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {barbersList.map((barber: any) => (
-                  <Card key={barber.id} className={`border-zinc-800 bg-zinc-950 p-5 ${!barber.active ? 'opacity-50' : ''}`}>
-                    <div className="flex justify-between items-start">
-                      <div className="flex items-center gap-3">
-                        {barber.photo_url ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {services.map(service => (
+                    <Card key={service.id} className="border-zinc-800 bg-zinc-950 p-4">
+                      <div className="flex gap-4">
+                        {service.image_url ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={barber.photo_url} alt={barber.name} className="w-12 h-12 rounded-full object-cover border border-zinc-700 shrink-0" />
+                          <img src={service.image_url} alt={service.name} className="w-20 h-20 rounded-lg object-cover bg-zinc-900 shrink-0" />
                         ) : (
-                          <div className="w-12 h-12 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center shrink-0">
-                            <UserIcon className="w-6 h-6 text-zinc-500" />
+                          <div className="w-20 h-20 rounded-lg bg-zinc-900 flex items-center justify-center shrink-0">
+                            <Scissors className="w-8 h-8 text-zinc-700" />
                           </div>
                         )}
-                        <div>
-                          <h4 className="font-bold text-white text-lg">{barber.name}</h4>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className={`text-xs px-2 py-0.5 rounded-full ${barber.active !== false ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
-                              {barber.active !== false ? 'Ativo' : 'Inativo'}
-                            </span>
-                            <span className="text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded-full">{barber.barber_services_styllus?.length || 0} Serviços</span>
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-bold text-white truncate">{service.name}</h4>
+                          <p className="text-sm text-zinc-400 mt-1 line-clamp-1">{service.description || 'Sem descrição'}</p>
+                          <div className="flex items-center gap-3 mt-2">
+                            <span className="text-emerald-500 font-bold bg-emerald-500/10 px-2 py-0.5 rounded text-xs">R$ {service.price}</span>
+                            <span className="text-xs text-zinc-500 flex items-center gap-1"><Clock className="w-3 h-3"/> {service.duration_minutes}m</span>
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-2 shrink-0">
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-400 hover:text-white bg-zinc-900" onClick={() => handleEditService(service)}>
+                            <Edit className="w-4 h-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-400 hover:text-red-500 bg-zinc-900" onClick={() => handleDeleteService(service.id)}>
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* COLABORADORES (BARBERS) */}
+            {activeTab === 'barbers' && (
+              <div className="space-y-6">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                  <div>
+                    <h2 className="text-2xl font-bold">Equipe de Barbeiros</h2>
+                    <p className="text-zinc-400 text-sm">Gerencie os profissionais e os serviços que cada um realiza.</p>
+                  </div>
+                  {!isCreatingBarber && (
+                    <Button onClick={() => { setIsCreatingBarber(true); setEditingBarberId(null); setBarberForm({name:'', active:true, selectedServices:[], photo_url: ''}); setBarberImageFile(null) }} className="bg-red-600 hover:bg-red-700 shrink-0">
+                      <Plus className="w-4 h-4 mr-2" /> Novo Barbeiro
+                    </Button>
+                  )}
+                </div>
+
+                {isCreatingBarber && (
+                  <Card className="border-zinc-700 bg-zinc-950">
+                    <CardHeader className="pb-4">
+                      <div className="flex justify-between items-start">
+                        <CardTitle>{editingBarberId ? 'Editar Colaborador' : 'Adicionar Colaborador'}</CardTitle>
+                        <Button variant="ghost" size="icon" onClick={() => setIsCreatingBarber(false)} className="h-8 w-8 hover:bg-zinc-800">
+                          <X className="w-4 h-4 text-zinc-400" />
+                        </Button>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-6">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="space-y-2">
+                          <Label>Nome do Profissional</Label>
+                          <Input value={barberForm.name} onChange={e => setBarberForm({...barberForm, name: e.target.value})} className="bg-zinc-900 border-zinc-800" placeholder="Ex: João Ferreira" />
+                        </div>
+                        
+                        <div className="space-y-2">
+                          <Label>Foto do Perfil (1:1 Quadrada)</Label>
+                          <div className="flex flex-col items-center justify-center p-3 border-2 border-dashed border-zinc-800 rounded-xl bg-zinc-900/50 hover:bg-zinc-900 transition-colors relative h-20">
+                            <input 
+                              type="file" accept="image/*" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" 
+                              onChange={(e) => { if(e.target.files && e.target.files[0]) setBarberImageFile(e.target.files[0]) }}
+                            />
+                            {barberImageFile ? (
+                              <div className="text-center font-medium text-emerald-500 flex items-center gap-2 text-sm">
+                                <CheckCircle className="w-4 h-4" />
+                                {barberImageFile.name}
+                              </div>
+                            ) : barberForm.photo_url ? (
+                              <div className="absolute inset-0 p-1 flex justify-center">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={barberForm.photo_url} alt="Barber Preview" className="h-full object-contain rounded-full" />
+                              </div>
+                            ) : (
+                              <div className="text-center text-zinc-500 flex flex-col items-center">
+                                <ImageIcon className="w-4 h-4 mb-1 opacity-50" />
+                                <span className="text-xs">Upload de Foto</span>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
-                      <div className="flex flex-col gap-2 shrink-0">
-                        <Button variant="ghost" size="icon" onClick={() => handleEditBarber(barber)} className="h-8 w-8 text-zinc-400 hover:text-white hover:bg-zinc-800">
-                          <Edit className="w-4 h-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon" onClick={() => handleDeleteBarber(barber.id)} className="h-8 w-8 text-zinc-500 hover:text-red-500 hover:bg-red-500/10">
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+
+                      <div className="flex items-center gap-3 pt-4 border-t border-zinc-800/50">
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input 
+                            type="checkbox" 
+                            className="sr-only peer" 
+                            checked={barberForm.active} 
+                            onChange={e => setBarberForm({...barberForm, active: e.target.checked})}
+                          />
+                          <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                        </label>
+                        <span className={`text-sm font-medium ${barberForm.active ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {barberForm.active ? 'Ativo - Disponível para agendamentos' : 'Inativo - Não aparece para clientes'}
+                        </span>
                       </div>
-                    </div>
+
+                      <div className="space-y-3 pt-2">
+                        <Label>Serviços Realizados por este profissional</Label>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                          {services.map(s => (
+                            <div 
+                              key={s.id} 
+                              onClick={() => toggleServiceForBarber(s.id)}
+                              className={`p-3 border rounded-lg cursor-pointer flex items-center gap-3 transition-colors ${barberForm.selectedServices.includes(s.id) ? 'border-red-500 bg-red-500/10' : 'border-zinc-800 bg-zinc-900 hover:border-zinc-600'}`}
+                            >
+                              <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${barberForm.selectedServices.includes(s.id) ? 'bg-red-500 border-red-500' : 'border-zinc-600'}`}>
+                                {barberForm.selectedServices.includes(s.id) && <CheckCircle className="w-3 h-3 text-white" />}
+                              </div>
+                              <span className="text-sm font-medium text-white line-clamp-1">{s.name}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <Button className="w-full bg-emerald-600 hover:bg-emerald-700" onClick={handleSaveBarber} disabled={isSavingBarber}>
+                        {isSavingBarber ? 'Salvando...' : 'Salvar Barbeiro'}
+                      </Button>
+                    </CardContent>
                   </Card>
-                ))}
-                {barbersList.length === 0 && !isCreatingBarber && (
-                   <div className="col-span-full text-center p-8 border border-zinc-800 border-dashed rounded-xl">
-                     <p className="text-zinc-500">Nenhum barbeiro cadastrado. Os agendamentos não exibirão escolha de profissional.</p>
-                   </div>
                 )}
-              </div>
-            </div>
-          )}
 
-          {/* METRICS DASHBOARD */}
-          {activeTab === 'metrics' && (
-            <div className="space-y-6">
-              {/* Header + Date Range Controls */}
-              <div className="flex flex-col gap-4">
-                <div>
-                  <h2 className="text-2xl font-bold flex items-center gap-2">
-                    <BarChart3 className="w-6 h-6 text-red-500" /> Dashboard de Métricas
-                  </h2>
-                  <p className="text-zinc-400 text-sm">Acompanhe o desempenho financeiro e os agendamentos.</p>
-                </div>
-
-                {/* Date Preset Buttons */}
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    { key: '7d', label: '7 dias' },
-                    { key: '30d', label: '30 dias' },
-                    { key: 'month', label: 'Este Mês' },
-                    { key: 'lastMonth', label: 'Mês Anterior' },
-                    { key: '6m', label: '6 meses' },
-                  ].map(p => (
-                    <button
-                      key={p.key}
-                      onClick={() => applyMetricPreset(p.key)}
-                      className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
-                        metricPreset === p.key
-                          ? 'bg-red-600 border-red-500 text-white'
-                          : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
-                      }`}
-                    >
-                      {p.label}
-                    </button>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {barbersList.map((barber: any) => (
+                    <Card key={barber.id} className={`border-zinc-800 bg-zinc-950 p-5 ${!barber.active ? 'opacity-50' : ''}`}>
+                      <div className="flex justify-between items-start">
+                        <div className="flex items-center gap-3">
+                          {barber.photo_url ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={barber.photo_url} alt={barber.name} className="w-12 h-12 rounded-full object-cover border border-zinc-700 shrink-0" />
+                          ) : (
+                            <div className="w-12 h-12 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center shrink-0">
+                              <UserIcon className="w-6 h-6 text-zinc-500" />
+                            </div>
+                          )}
+                          <div>
+                            <h4 className="font-bold text-white text-lg">{barber.name}</h4>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className={`text-xs px-2 py-0.5 rounded-full ${barber.active !== false ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
+                                {barber.active !== false ? 'Ativo' : 'Inativo'}
+                              </span>
+                              <span className="text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded-full">{barber.barber_services_styllus?.length || 0} Serviços</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-2 shrink-0">
+                          <Button variant="ghost" size="icon" onClick={() => handleEditBarber(barber)} className="h-8 w-8 text-zinc-400 hover:text-white hover:bg-zinc-800">
+                            <Edit className="w-4 h-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" onClick={() => handleDeleteBarber(barber.id)} className="h-8 w-8 text-zinc-500 hover:text-red-500 hover:bg-red-500/10">
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </Card>
                   ))}
+                  {barbersList.length === 0 && !isCreatingBarber && (
+                     <div className="col-span-full text-center p-8 border border-zinc-800 border-dashed rounded-xl">
+                       <p className="text-zinc-500">Nenhum barbeiro cadastrado. Os agendamentos não exibirão escolha de profissional.</p>
+                     </div>
+                  )}
                 </div>
+              </div>
+            )}
 
-                {/* Custom Date Range + Compare Toggle */}
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs text-zinc-500">De:</label>
-                    <input
-                      type="date"
-                      value={metricDateStart}
-                      onChange={e => { setMetricDateStart(e.target.value); setMetricPreset('custom') }}
-                      className="bg-zinc-900 border border-zinc-800 text-white text-sm rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-red-500"
-                    />
+            {/* METRICS DASHBOARD */}
+            {activeTab === 'metrics' && (
+              <div className="space-y-6">
+                {/* Header + Date Range Controls */}
+                <div className="flex flex-col gap-4">
+                  <div>
+                    <h2 className="text-2xl font-bold flex items-center gap-2">
+                      <BarChart3 className="w-6 h-6 text-red-500" /> Dashboard de Métricas
+                    </h2>
+                    <p className="text-zinc-400 text-sm">Acompanhe o desempenho financeiro e os agendamentos.</p>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs text-zinc-500">Até:</label>
-                    <input
-                      type="date"
-                      value={metricDateEnd}
-                      onChange={e => { setMetricDateEnd(e.target.value); setMetricPreset('custom') }}
-                      className="bg-zinc-900 border border-zinc-800 text-white text-sm rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-red-500"
-                    />
-                  </div>
-                  <label className="flex items-center gap-2 ml-auto cursor-pointer select-none">
-                    <span className="text-xs text-zinc-400">Comparar período anterior</span>
-                    <div
-                      onClick={() => setMetricCompare(!metricCompare)}
-                      className={`relative w-9 h-5 rounded-full transition-colors ${
-                        metricCompare ? 'bg-red-600' : 'bg-zinc-700'
-                      }`}
-                    >
-                      <div
-                        className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
-                          metricCompare ? 'translate-x-4' : 'translate-x-0'
+
+                  {/* Date Preset Buttons */}
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { key: '7d', label: '7 dias' },
+                      { key: '30d', label: '30 dias' },
+                      { key: 'month', label: 'Este Mês' },
+                      { key: 'lastMonth', label: 'Mês Anterior' },
+                      { key: '6m', label: '6 meses' },
+                    ].map(p => (
+                      <button
+                        key={p.key}
+                        onClick={() => applyMetricPreset(p.key)}
+                        className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                          metricPreset === p.key
+                            ? 'bg-red-600 border-red-500 text-white'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200'
                         }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Custom Date Range + Compare Toggle */}
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-zinc-500">De:</label>
+                      <input
+                        type="date"
+                        value={metricDateStart}
+                        onChange={e => { setMetricDateStart(e.target.value); setMetricPreset('custom') }}
+                        className="bg-zinc-900 border border-zinc-800 text-white text-sm rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-red-500"
                       />
                     </div>
-                  </label>
-                </div>
-              </div>
-
-              {metricsLoading ? (
-                <div className="flex justify-center items-center py-16">
-                  <div className="w-8 h-8 border-4 border-red-500 border-t-transparent rounded-full animate-spin" />
-                </div>
-              ) : (
-                <>
-                  {/* KPI Cards */}
-                  <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-                    {/* Revenue */}
-                    <Card className="border-zinc-800 bg-zinc-950 p-5 col-span-2 lg:col-span-1">
-                      <p className="text-xs text-zinc-500 uppercase tracking-wider">Receita</p>
-                      <h3 className="text-2xl font-bold text-white mt-1">
-                        R$ {(metricsData.summary.totalRevenue || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </h3>
-                      {metricCompare && (
-                        <div className={`inline-flex items-center gap-1 text-xs font-medium mt-2 px-1.5 py-0.5 rounded ${
-                          Number(metricsData.summary.revGrowth) >= 0 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'
-                        }`}>
-                          <TrendingUp className={`w-3 h-3 ${Number(metricsData.summary.revGrowth) < 0 ? 'rotate-180' : ''}`} />
-                          {metricsData.summary.revGrowth}%
-                        </div>
-                      )}
-                    </Card>
-
-                    {/* Bookings */}
-                    <Card className="border-zinc-800 bg-zinc-950 p-5">
-                      <p className="text-xs text-zinc-500 uppercase tracking-wider">Agendamentos</p>
-                      <h3 className="text-2xl font-bold text-white mt-1">{metricsData.summary.totalBookings || 0}</h3>
-                      {metricCompare && (
-                        <div className={`inline-flex items-center gap-1 text-xs font-medium mt-2 px-1.5 py-0.5 rounded ${
-                          Number(metricsData.summary.bookGrowth) >= 0 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'
-                        }`}>
-                          <TrendingUp className={`w-3 h-3 ${Number(metricsData.summary.bookGrowth) < 0 ? 'rotate-180' : ''}`} />
-                          {metricsData.summary.bookGrowth}%
-                        </div>
-                      )}
-                    </Card>
-
-                    {/* Ticket Médio */}
-                    <Card className="border-zinc-800 bg-zinc-950 p-5">
-                      <p className="text-xs text-zinc-500 uppercase tracking-wider">Ticket Médio</p>
-                      <h3 className="text-2xl font-bold text-emerald-400 mt-1">
-                        R$ {(metricsData.summary.ticketMedio || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </h3>
-                      {metricCompare && (
-                        <div className={`inline-flex items-center gap-1 text-xs font-medium mt-2 px-1.5 py-0.5 rounded ${
-                          Number(metricsData.summary.ticketGrowth) >= 0 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'
-                        }`}>
-                          <TrendingUp className={`w-3 h-3 ${Number(metricsData.summary.ticketGrowth) < 0 ? 'rotate-180' : ''}`} />
-                          {metricsData.summary.ticketGrowth}%
-                        </div>
-                      )}
-                    </Card>
-
-                    {/* Cancelamento */}
-                    <Card className="border-zinc-800 bg-zinc-950 p-5">
-                      <p className="text-xs text-zinc-500 uppercase tracking-wider">Cancelamentos</p>
-                      <h3 className="text-2xl font-bold text-orange-400 mt-1">
-                        {(metricsData.summary.cancelRate || 0).toFixed(1)}%
-                      </h3>
-                      {metricCompare && (
-                        <div className={`inline-flex items-center gap-1 text-xs font-medium mt-2 px-1.5 py-0.5 rounded ${
-                          Number(metricsData.summary.cancelGrowth) <= 0 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'
-                        }`}>
-                          <TrendingUp className={`w-3 h-3 ${Number(metricsData.summary.cancelGrowth) > 0 ? 'rotate-180' : ''}`} />
-                          {Math.abs(Number(metricsData.summary.cancelGrowth))}pp
-                        </div>
-                      )}
-                    </Card>
-
-                    {/* Top Serviço */}
-                    <Card className="border-zinc-800 bg-zinc-950 p-5">
-                      <p className="text-xs text-zinc-500 uppercase tracking-wider">Top Serviço</p>
-                      <h3 className="text-lg font-bold text-white mt-1 truncate" title={metricsData.summary.topService}>
-                        {metricsData.summary.topService || 'N/A'}
-                      </h3>
-                      <p className="text-xs text-zinc-500 mt-2">Mais agendado</p>
-                    </Card>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-zinc-500">Até:</label>
+                      <input
+                        type="date"
+                        value={metricDateEnd}
+                        onChange={e => { setMetricDateEnd(e.target.value); setMetricPreset('custom') }}
+                        className="bg-zinc-900 border border-zinc-800 text-white text-sm rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-red-500"
+                      />
+                    </div>
+                    <label className="flex items-center gap-2 ml-auto cursor-pointer select-none">
+                      <span className="text-xs text-zinc-400">Comparar período anterior</span>
+                      <div
+                        onClick={() => setMetricCompare(!metricCompare)}
+                        className={`relative w-9 h-5 rounded-full transition-colors ${
+                          metricCompare ? 'bg-red-600' : 'bg-zinc-700'
+                        }`}
+                      >
+                        <div
+                          className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
+                            metricCompare ? 'translate-x-4' : 'translate-x-0'
+                          }`}
+                        />
+                      </div>
+                    </label>
                   </div>
+                </div>
 
-                  {/* Charts */}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {/* Receita Diária (AreaChart) */}
-                    <Card className="border-zinc-800 bg-zinc-950">
-                      <CardHeader className="pb-2">
-                        <CardTitle className="text-base">Receita Diária</CardTitle>
-                        <CardDescription>Receita confirmada por dia no período selecionado</CardDescription>
-                      </CardHeader>
-                      <CardContent>
-                        <div style={{ width: '100%', height: 280 }}>
-                          <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={metricsData.daily}>
-                              <defs>
-                                <linearGradient id="gradRed" x1="0" y1="0" x2="0" y2="1">
-                                  <stop offset="0%" stopColor="#ef4444" stopOpacity={0.3} />
-                                  <stop offset="100%" stopColor="#ef4444" stopOpacity={0} />
-                                </linearGradient>
-                              </defs>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
-                              <XAxis dataKey="name" stroke="#71717a" fontSize={11} tickLine={false} axisLine={false} />
-                              <YAxis stroke="#71717a" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => `R$${v}`} />
-                              <RechartsTooltip
-                                cursor={{ stroke: '#71717a', strokeDasharray: '4 4' }}
-                                contentStyle={{ backgroundColor: '#18181b', borderColor: '#3f3f46', borderRadius: '8px', color: '#fff', fontSize: '12px' }}
-                                formatter={(val: any) => [`R$ ${Number(val).toFixed(2)}`, 'Receita'] as any}
-                              />
-                              <Area type="monotone" dataKey="Receita" stroke="#ef4444" strokeWidth={2} fill="url(#gradRed)" />
-                            </AreaChart>
-                          </ResponsiveContainer>
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    {/* Agendamentos Diários (Bar) */}
-                    <Card className="border-zinc-800 bg-zinc-950">
-                      <CardHeader className="pb-2">
-                        <CardTitle className="text-base">Agendamentos por Dia</CardTitle>
-                        <CardDescription>Volume de agendamentos confirmados</CardDescription>
-                      </CardHeader>
-                      <CardContent>
-                        <div style={{ width: '100%', height: 280 }}>
-                          <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={metricsData.daily}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
-                              <XAxis dataKey="name" stroke="#71717a" fontSize={11} tickLine={false} axisLine={false} />
-                              <YAxis stroke="#71717a" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
-                              <RechartsTooltip
-                                cursor={{ fill: '#27272a80' }}
-                                contentStyle={{ backgroundColor: '#18181b', borderColor: '#3f3f46', borderRadius: '8px', color: '#fff', fontSize: '12px' }}
-                              />
-                              <Bar dataKey="Agendamentos" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                            </BarChart>
-                          </ResponsiveContainer>
-                        </div>
-                      </CardContent>
-                    </Card>
+                {metricsLoading ? (
+                  <div className="flex justify-center items-center py-16">
+                    <div className="w-8 h-8 border-4 border-red-500 border-t-transparent rounded-full animate-spin" />
                   </div>
+                ) : (
+                  <>
+                    {/* KPI Cards */}
+                    <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                      {/* Revenue */}
+                      <Card className="border-zinc-800 bg-zinc-950 p-5 col-span-2 lg:col-span-1">
+                        <p className="text-xs text-zinc-500 uppercase tracking-wider">Receita</p>
+                        <h3 className="text-2xl font-bold text-white mt-1">
+                          R$ {(metricsData.summary.totalRevenue || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </h3>
+                        {metricCompare && (
+                          <div className={`inline-flex items-center gap-1 text-xs font-medium mt-2 px-1.5 py-0.5 rounded ${
+                            Number(metricsData.summary.revGrowth) >= 0 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'
+                          }`}>
+                            <TrendingUp className={`w-3 h-3 ${Number(metricsData.summary.revGrowth) < 0 ? 'rotate-180' : ''}`} />
+                            {metricsData.summary.revGrowth}%
+                          </div>
+                        )}
+                      </Card>
 
-                  {/* Row 3: Top Services + Monthly Growth */}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {/* Top Services */}
-                    {metricsData.topServices?.length > 0 && (
+                      {/* Bookings */}
+                      <Card className="border-zinc-800 bg-zinc-950 p-5">
+                        <p className="text-xs text-zinc-500 uppercase tracking-wider">Agendamentos</p>
+                        <h3 className="text-2xl font-bold text-white mt-1">{metricsData.summary.totalBookings || 0}</h3>
+                        {metricCompare && (
+                          <div className={`inline-flex items-center gap-1 text-xs font-medium mt-2 px-1.5 py-0.5 rounded ${
+                            Number(metricsData.summary.bookGrowth) >= 0 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'
+                          }`}>
+                            <TrendingUp className={`w-3 h-3 ${Number(metricsData.summary.bookGrowth) < 0 ? 'rotate-180' : ''}`} />
+                            {metricsData.summary.bookGrowth}%
+                          </div>
+                        )}
+                      </Card>
+
+                      {/* Ticket Médio */}
+                      <Card className="border-zinc-800 bg-zinc-950 p-5">
+                        <p className="text-xs text-zinc-500 uppercase tracking-wider">Ticket Médio</p>
+                        <h3 className="text-2xl font-bold text-emerald-400 mt-1">
+                          R$ {(metricsData.summary.ticketMedio || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </h3>
+                        {metricCompare && (
+                          <div className={`inline-flex items-center gap-1 text-xs font-medium mt-2 px-1.5 py-0.5 rounded ${
+                            Number(metricsData.summary.ticketGrowth) >= 0 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'
+                          }`}>
+                            <TrendingUp className={`w-3 h-3 ${Number(metricsData.summary.ticketGrowth) < 0 ? 'rotate-180' : ''}`} />
+                            {metricsData.summary.ticketGrowth}%
+                          </div>
+                        )}
+                      </Card>
+
+                      {/* Cancelamento */}
+                      <Card className="border-zinc-800 bg-zinc-950 p-5">
+                        <p className="text-xs text-zinc-500 uppercase tracking-wider">Cancelamentos</p>
+                        <h3 className="text-2xl font-bold text-orange-400 mt-1">
+                          {(metricsData.summary.cancelRate || 0).toFixed(1)}%
+                        </h3>
+                        {metricCompare && (
+                          <div className={`inline-flex items-center gap-1 text-xs font-medium mt-2 px-1.5 py-0.5 rounded ${
+                            Number(metricsData.summary.cancelGrowth) <= 0 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'
+                          }`}>
+                            <TrendingUp className={`w-3 h-3 ${Number(metricsData.summary.cancelGrowth) > 0 ? 'rotate-180' : ''}`} />
+                            {Math.abs(Number(metricsData.summary.cancelGrowth))}pp
+                          </div>
+                        )}
+                      </Card>
+
+                      {/* Top Serviço */}
+                      <Card className="border-zinc-800 bg-zinc-950 p-5">
+                        <p className="text-xs text-zinc-500 uppercase tracking-wider">Top Serviço</p>
+                        <h3 className="text-lg font-bold text-white mt-1 truncate" title={metricsData.summary.topService}>
+                          {metricsData.summary.topService || 'N/A'}
+                        </h3>
+                        <p className="text-xs text-zinc-500 mt-2">Mais agendado</p>
+                      </Card>
+                    </div>
+
+                    {/* Charts */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      {/* Receita Diária (AreaChart) */}
                       <Card className="border-zinc-800 bg-zinc-950">
                         <CardHeader className="pb-2">
-                          <CardTitle className="text-base">Receita por Serviço</CardTitle>
-                          <CardDescription>Serviços com maior faturamento no período</CardDescription>
+                          <CardTitle className="text-base">Receita Diária</CardTitle>
+                          <CardDescription>Receita confirmada por dia no período selecionado</CardDescription>
                         </CardHeader>
                         <CardContent>
                           <div style={{ width: '100%', height: 280 }}>
                             <ResponsiveContainer width="100%" height="100%">
-                              <BarChart data={metricsData.topServices} layout="vertical">
-                                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" horizontal={false} />
-                                <XAxis type="number" stroke="#71717a" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => `R$${v}`} />
-                                <YAxis type="category" dataKey="name" stroke="#71717a" fontSize={11} tickLine={false} axisLine={false} width={100} />
+                              <AreaChart data={metricsData.daily}>
+                                <defs>
+                                  <linearGradient id="gradRed" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%" stopColor="#ef4444" stopOpacity={0.3} />
+                                    <stop offset="100%" stopColor="#ef4444" stopOpacity={0} />
+                                  </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                                <XAxis dataKey="name" stroke="#71717a" fontSize={11} tickLine={false} axisLine={false} />
+                                <YAxis stroke="#71717a" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => `R$${v}`} />
                                 <RechartsTooltip
+                                  cursor={{ stroke: '#71717a', strokeDasharray: '4 4' }}
                                   contentStyle={{ backgroundColor: '#18181b', borderColor: '#3f3f46', borderRadius: '8px', color: '#fff', fontSize: '12px' }}
                                   formatter={(val: any) => [`R$ ${Number(val).toFixed(2)}`, 'Receita'] as any}
                                 />
-                                <Bar dataKey="Receita" fill="#10b981" radius={[0, 4, 4, 0]} />
+                                <Area type="monotone" dataKey="Receita" stroke="#ef4444" strokeWidth={2} fill="url(#gradRed)" />
+                              </AreaChart>
+                            </ResponsiveContainer>
+                          </div>
+                        </CardContent>
+                      </Card>
+
+                      {/* Agendamentos Diários (Bar) */}
+                      <Card className="border-zinc-800 bg-zinc-950">
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-base">Agendamentos por Dia</CardTitle>
+                          <CardDescription>Volume de agendamentos confirmados</CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                          <div style={{ width: '100%', height: 280 }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                              <BarChart data={metricsData.daily}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                                <XAxis dataKey="name" stroke="#71717a" fontSize={11} tickLine={false} axisLine={false} />
+                                <YAxis stroke="#71717a" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
+                                <RechartsTooltip
+                                  cursor={{ fill: '#27272a80' }}
+                                  contentStyle={{ backgroundColor: '#18181b', borderColor: '#3f3f46', borderRadius: '8px', color: '#fff', fontSize: '12px' }}
+                                />
+                                <Bar dataKey="Agendamentos" fill="#3b82f6" radius={[4, 4, 0, 0]} />
                               </BarChart>
                             </ResponsiveContainer>
                           </div>
                         </CardContent>
                       </Card>
-                    )}
+                    </div>
 
-                    {/* Monthly Growth (if multi-month range) */}
-                    {metricsData.monthly?.length > 1 && (
-                      <Card className="border-zinc-800 bg-zinc-950">
-                        <CardHeader className="pb-2">
-                          <CardTitle className="text-base">Crescimento Mensal</CardTitle>
-                          <CardDescription>Receita e agendamentos por mês</CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                          <div style={{ width: '100%', height: 280 }}>
-                            <ResponsiveContainer width="100%" height="100%">
-                              <LineChart data={metricsData.monthly}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
-                                <XAxis dataKey="name" stroke="#71717a" fontSize={11} tickLine={false} axisLine={false} />
-                                <YAxis stroke="#71717a" fontSize={11} tickLine={false} axisLine={false} />
-                                <RechartsTooltip
-                                  contentStyle={{ backgroundColor: '#18181b', borderColor: '#3f3f46', borderRadius: '8px', color: '#fff', fontSize: '12px' }}
-                                />
-                                <Line type="monotone" dataKey="Agendamentos" stroke="#3b82f6" strokeWidth={2.5} dot={{ fill: '#3b82f6', r: 4 }} activeDot={{ r: 6 }} />
-                                <Line type="monotone" dataKey="Receita" stroke="#10b981" strokeWidth={2.5} dot={{ fill: '#10b981', r: 4 }} activeDot={{ r: 6 }} />
-                              </LineChart>
-                            </ResponsiveContainer>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
+                    {/* Row 3: Top Services + Monthly Growth */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      {/* Top Services */}
+                      {metricsData.topServices?.length > 0 && (
+                        <Card className="border-zinc-800 bg-zinc-950">
+                          <CardHeader className="pb-2">
+                            <CardTitle className="text-base">Receita por Serviço</CardTitle>
+                            <CardDescription>Serviços com maior faturamento no período</CardDescription>
+                          </CardHeader>
+                          <CardContent>
+                            <div style={{ width: '100%', height: 280 }}>
+                              <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={metricsData.topServices} layout="vertical">
+                                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" horizontal={false} />
+                                  <XAxis type="number" stroke="#71717a" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(v) => `R$${v}`} />
+                                  <YAxis type="category" dataKey="name" stroke="#71717a" fontSize={11} tickLine={false} axisLine={false} width={100} />
+                                  <RechartsTooltip
+                                    contentStyle={{ backgroundColor: '#18181b', borderColor: '#3f3f46', borderRadius: '8px', color: '#fff', fontSize: '12px' }}
+                                    formatter={(val: any) => [`R$ ${Number(val).toFixed(2)}`, 'Receita'] as any}
+                                  />
+                                  <Bar dataKey="Receita" fill="#10b981" radius={[0, 4, 4, 0]} />
+                                </BarChart>
+                              </ResponsiveContainer>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      )}
 
-          {/* CONFIGURAÇÕES */}
-          {activeTab === 'config' && (
-            <div className="space-y-6 max-w-2xl">
-              <div>
-                <h2 className="text-2xl font-bold">Configurações do Negócio</h2>
-                <p className="text-zinc-400 text-sm">Defina os horários e informações globais do sistema.</p>
+                      {/* Monthly Growth (if multi-month range) */}
+                      {metricsData.monthly?.length > 1 && (
+                        <Card className="border-zinc-800 bg-zinc-950">
+                          <CardHeader className="pb-2">
+                            <CardTitle className="text-base">Crescimento Mensal</CardTitle>
+                            <CardDescription>Receita e agendamentos por mês</CardDescription>
+                          </CardHeader>
+                          <CardContent>
+                            <div style={{ width: '100%', height: 280 }}>
+                              <ResponsiveContainer width="100%" height="100%">
+                                <LineChart data={metricsData.monthly}>
+                                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                                  <XAxis dataKey="name" stroke="#71717a" fontSize={11} tickLine={false} axisLine={false} />
+                                  <YAxis stroke="#71717a" fontSize={11} tickLine={false} axisLine={false} />
+                                  <RechartsTooltip
+                                    contentStyle={{ backgroundColor: '#18181b', borderColor: '#3f3f46', borderRadius: '8px', color: '#fff', fontSize: '12px' }}
+                                  />
+                                  <Line type="monotone" dataKey="Agendamentos" stroke="#3b82f6" strokeWidth={2.5} dot={{ fill: '#3b82f6', r: 4 }} activeDot={{ r: 6 }} />
+                                  <Line type="monotone" dataKey="Receita" stroke="#10b981" strokeWidth={2.5} dot={{ fill: '#10b981', r: 4 }} activeDot={{ r: 6 }} />
+                                </LineChart>
+                              </ResponsiveContainer>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
-              
-              <Card className="border-zinc-800 bg-zinc-950">
-                <CardHeader>
-                  <CardTitle>Horário de Funcionamento</CardTitle>
-                  <CardDescription>Estes horários definem se o estabelecimento consta como Aberto ou Fechado no site.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  <div className="grid grid-cols-2 gap-6">
-                    <div className="space-y-2">
-                      <Label>Abertura (HH:MM)</Label>
-                      <Input type="time" value={config?.open_time || '09:00'} onChange={e => setConfig({...config, open_time: e.target.value})} className="bg-zinc-900 border-zinc-800" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Fechamento (HH:MM)</Label>
-                      <Input type="time" value={config?.close_time || '19:00'} onChange={e => setConfig({...config, close_time: e.target.value})} className="bg-zinc-900 border-zinc-800" />
-                    </div>
-                  </div>
+            )}
 
-                  <div className="space-y-2 border-t border-zinc-800/50 pt-6">
-                    <Label>Limite para Cancelamento (horas)</Label>
-                    <p className="text-zinc-500 text-xs">Quantas horas antes do horário agendado o cliente ainda pode cancelar.</p>
-                    <Input 
-                      type="number" 
-                      min="0" 
-                      max="48" 
-                      value={config?.cancel_limit_hours ?? 2} 
-                      onChange={e => setConfig({...config, cancel_limit_hours: parseInt(e.target.value) || 0})} 
-                      className="bg-zinc-900 border-zinc-800 w-32" 
-                    />
-                  </div>
-
-                  <div className="space-y-3 border-t border-zinc-800/50 pt-6">
-                    <Label>Dias de Funcionamento</Label>
-                    <div className="flex flex-wrap gap-2">
-                      {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map((day, ix) => (
-                        <button
-                          key={ix}
-                          onClick={() => toggleDay(ix)}
-                          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors border ${
-                            (Array.isArray(config?.open_days) ? config.open_days : typeof config?.open_days === 'string' ? JSON.parse(config.open_days).map(Number) : []).includes(ix) 
-                              ? 'bg-red-600 border-red-500 text-white' 
-                              : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
-                          }`}
-                        >
-                          {day}
-                        </button>
-                      ))}
+            {/* CONFIGURAÇÕES */}
+            {activeTab === 'config' && (
+              <div className="space-y-6 max-w-2xl">
+                <div>
+                  <h2 className="text-2xl font-bold">Configurações do Negócio</h2>
+                  <p className="text-zinc-400 text-sm">Defina os horários e informações globais do sistema.</p>
+                </div>
+                
+                <Card className="border-zinc-800 bg-zinc-950">
+                  <CardHeader>
+                    <CardTitle>Horário de Funcionamento</CardTitle>
+                    <CardDescription>Estes horários definem se o estabelecimento consta como Aberto ou Fechado no site.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    <div className="grid grid-cols-2 gap-6">
+                      <div className="space-y-2">
+                        <Label>Abertura (HH:MM)</Label>
+                        <Input type="time" value={config?.open_time || '09:00'} onChange={e => setConfig({...config, open_time: e.target.value})} className="bg-zinc-900 border-zinc-800" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Fechamento (HH:MM)</Label>
+                        <Input type="time" value={config?.close_time || '19:00'} onChange={e => setConfig({...config, close_time: e.target.value})} className="bg-zinc-900 border-zinc-800" />
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="space-y-3 border-t border-zinc-800/50 pt-6">
-                    <Label>Exceções (Dias Fechados)</Label>
-                    <CardDescription>Adicione datas específicas onde a barbearia estará de folga/fechada, e horários não serão gerados.</CardDescription>
-                    <div className="flex gap-2">
+                    <div className="space-y-2 border-t border-zinc-800/50 pt-6">
+                      <Label>Limite para Cancelamento (horas)</Label>
+                      <p className="text-zinc-500 text-xs">Quantas horas antes do horário agendado o cliente ainda pode cancelar.</p>
                       <Input 
-                        type="date" 
-                        id="new-closed-date"
-                        min={format(new Date(), 'yyyy-MM-dd')}
-                        className="bg-zinc-900 border-zinc-800" 
+                        type="number" 
+                        min="0" 
+                        max="48" 
+                        value={config?.cancel_limit_hours ?? 2} 
+                        onChange={e => setConfig({...config, cancel_limit_hours: parseInt(e.target.value) || 0})} 
+                        className="bg-zinc-900 border-zinc-800 w-32" 
                       />
-                      <Button 
-                        type="button" 
-                        className="bg-zinc-800 hover:bg-zinc-700" 
-                        onClick={() => {
-                          const input = document.getElementById('new-closed-date') as HTMLInputElement
-                          addClosedDate(input.value)
-                          input.value = ''
-                        }}
-                      >
-                        Adicionar
-                      </Button>
                     </div>
-                    <div className="flex flex-wrap gap-2 mt-3">
-                      {(config?.closed_dates || []).map((dateStr: string) => (
-                        <div key={dateStr} className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 px-3 py-1.5 rounded-lg text-sm text-zinc-300">
-                          {format(parseISO(dateStr), "dd/MM/yyyy")}
-                          <button onClick={() => removeClosedDate(dateStr)} className="text-zinc-500 hover:text-red-500">
-                            <X className="w-3 h-3" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
 
-                  <Button onClick={handleSaveConfig} disabled={isSavingConfig} className="w-full mt-4 bg-red-600 hover:bg-red-700">
-                    {isSavingConfig ? 'Salvando...' : 'Guardar Configurações'}
-                  </Button>
-                </CardContent>
-              </Card>
-            </div>
-          )}
+                    <div className="space-y-3 border-t border-zinc-800/50 pt-6">
+                      <Label>Dias de Funcionamento</Label>
+                      <div className="flex flex-wrap gap-2">
+                        {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map((day, ix) => (
+                          <button
+                            key={ix}
+                            onClick={() => toggleDay(ix)}
+                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors border ${
+                              (config?.open_days || []).includes(ix) 
+                                ? 'bg-red-600 border-red-500 text-white' 
+                                : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                            }`}
+                          >
+                            {day}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 border-t border-zinc-800/50 pt-6">
+                      <Label>Exceções (Dias Fechados)</Label>
+                      <CardDescription>Adicione datas específicas onde a barbearia estará de folga/fechada, e horários não serão gerados.</CardDescription>
+                      <div className="flex gap-2">
+                        <Input 
+                          type="date" 
+                          id="new-closed-date"
+                          min={format(new Date(), 'yyyy-MM-dd')}
+                          className="bg-zinc-900 border-zinc-800" 
+                        />
+                        <Button 
+                          type="button" 
+                          className="bg-zinc-800 hover:bg-zinc-700" 
+                          onClick={() => {
+                            const input = document.getElementById('new-closed-date') as HTMLInputElement
+                            addClosedDate(input.value)
+                            input.value = ''
+                          }}
+                        >
+                          Adicionar
+                        </Button>
+                      </div>
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        {(config?.closed_dates || []).map((dateStr: string) => (
+                          <div key={dateStr} className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 px-3 py-1.5 rounded-lg text-sm text-zinc-300">
+                            {format(parseISO(dateStr), "dd/MM/yyyy")}
+                            <button onClick={() => removeClosedDate(dateStr)} className="text-zinc-500 hover:text-red-500">
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <Button onClick={handleSaveConfig} disabled={isSavingConfig} className="w-full mt-4 bg-red-600 hover:bg-red-700">
+                      {isSavingConfig ? 'Salvando...' : 'Guardar Configurações'}
+                    </Button>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
 
             {/* ABA DE CLIENTES */}
             {activeTab === 'clients' && (
@@ -1958,6 +2185,7 @@ export default function PainelStyllus() {
               </div>
             )}
           </div>
+        </div>
       </main>
     </div>
   )
