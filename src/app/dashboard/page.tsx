@@ -1,4 +1,4 @@
-﻿"use client"
+"use client"
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase-browser'
@@ -278,7 +278,7 @@ export default function DashboardPage() {
         onClose={() => setIsBookingModalOpen(false)} 
         onSuccess={() => window.location.reload()} 
         userId={user.id}
-        empresaId={profile?.empresa_id || process.env.NEXT_PUBLIC_EMPRESA_ID!} 
+        empresaId={process.env.NEXT_PUBLIC_EMPRESA_ID!} 
       />
 
       {isSettingsOpen && (

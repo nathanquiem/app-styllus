@@ -440,7 +440,7 @@ export default function PainelStyllus() {
 
   // --- CONFIG LOGIC ---
   const fetchConfig = async () => {
-    const empresaId = profile?.empresa_id || process.env.NEXT_PUBLIC_EMPRESA_ID!
+    const empresaId = process.env.NEXT_PUBLIC_EMPRESA_ID!
     const { data } = await supabase
       .from('business_config_styllus')
       .select('*')
@@ -683,12 +683,10 @@ export default function PainelStyllus() {
     setIsClientsLoading(pageIndex === 0)
     const from = pageIndex * 50
     const to = from + 49
-    const empresaId = profile?.empresa_id
-    
+        
     let query = supabase.from('profiles_styllus').select('*', { count: 'exact' }).order('full_name', { ascending: true })
     
-    if (empresaId) query = query
-    if (search) query = query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`)
+        if (search) query = query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`)
     
     const { data, count, error } = await query.range(from, to)
 
@@ -910,7 +908,7 @@ export default function PainelStyllus() {
   // --- WHATSAPP LOGIC ---
   // Helper: get WhatsApp config directly from DB (avoids race with config state)
   const getWaConfig = async () => {
-    const empresaId = profile?.empresa_id || process.env.NEXT_PUBLIC_EMPRESA_ID!
+    const empresaId = process.env.NEXT_PUBLIC_EMPRESA_ID!
     const { data } = await supabase
       .from('business_config_styllus')
       .select('evolution_instance_id, apikey_id')
