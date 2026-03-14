@@ -567,15 +567,15 @@ export default function PainelStyllus() {
   const generateQuickTimeSlots = () => {
     const slots = []
     let startHour = 9
-    let endHour = 19
     let startMin = 0
+    let closeTotalMinutes = 19 * 60 // default → last slot 18:30
 
     if (config?.open_time && config?.close_time) {
        const [openH, openM] = config.open_time.split(':').map(Number)
        const [closeH, closeM] = config.close_time.split(':').map(Number)
        startHour = openH
-       endHour = closeH
        startMin = openM
+       closeTotalMinutes = closeH * 60 + closeM
     }
 
     let cursorH = startHour
@@ -585,12 +585,16 @@ export default function PainelStyllus() {
     const isToday = quickDate === format(now, 'yyyy-MM-dd')
     const currentTotalMinutes = now.getHours() * 60 + now.getMinutes()
 
-    while (cursorH < endHour || (cursorH === endHour && cursorM === 0)) {
+    while (true) {
+      const slotTotalMinutes = cursorH * 60 + cursorM
+
+      // A slot is valid only if it finishes by closing time (each slot = 30 min)
+      if (slotTotalMinutes + 30 > closeTotalMinutes) break
+
       const slotStr = `${cursorH.toString().padStart(2, '0')}:${cursorM.toString().padStart(2, '0')}`
       
       let isValidSlot = true
       if (isToday) {
-        const slotTotalMinutes = cursorH * 60 + cursorM
         if (slotTotalMinutes < currentTotalMinutes + 30) {
           isValidSlot = false
         }
@@ -694,10 +698,37 @@ export default function PainelStyllus() {
     
     const { data, count, error } = await query.range(from, to)
 
-    
     if (data && !error) {
-      if (pageIndex === 0) setClientsList(data)
-      else setClientsList(prev => [...prev, ...data])
+      // Fetch booking stats for these clients in one query
+      const clientIds = data.map((c: any) => c.id).filter(Boolean)
+      let statsMap: Record<string, { bookingCount: number; totalSpent: number }> = {}
+
+      if (clientIds.length > 0) {
+        const { data: bookingStats } = await supabase
+          .from('bookings')
+          .select('client_id, services(price)')
+          .in('client_id', clientIds)
+          .eq('status', 'confirmed')
+          .eq('empresa_id', empresaId || process.env.NEXT_PUBLIC_EMPRESA_ID!)
+
+        if (bookingStats) {
+          bookingStats.forEach((b: any) => {
+            if (!b.client_id) return
+            if (!statsMap[b.client_id]) statsMap[b.client_id] = { bookingCount: 0, totalSpent: 0 }
+            statsMap[b.client_id].bookingCount += 1
+            statsMap[b.client_id].totalSpent += Number(b.services?.price) || 0
+          })
+        }
+      }
+
+      const enriched = data.map((c: any) => ({
+        ...c,
+        bookingCount: statsMap[c.id]?.bookingCount || 0,
+        totalSpent: statsMap[c.id]?.totalSpent || 0,
+      }))
+
+      if (pageIndex === 0) setClientsList(enriched)
+      else setClientsList(prev => [...prev, ...enriched])
       
       setHasMoreClients(count !== null && count > to + 1)
     }
@@ -2013,6 +2044,14 @@ export default function PainelStyllus() {
                                   <Phone className="w-3 h-3 text-emerald-500" /> {formatPhone(client.phone)}
                                 </p>
                               )}
+                              <div className="flex items-center gap-2 mt-3 flex-wrap">
+                                <span className="text-xs bg-zinc-800 text-emerald-400 border border-zinc-700 px-2 py-0.5 rounded-full font-medium">
+                                  {client.bookingCount || 0} agendamento{(client.bookingCount || 0) !== 1 ? 's' : ''}
+                                </span>
+                                <span className="text-xs bg-zinc-800 text-zinc-300 border border-zinc-700 px-2 py-0.5 rounded-full font-medium">
+                                  R$ {(client.totalSpent || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
+                              </div>
                               <p className="text-[10px] text-zinc-600 mt-2">
                                 Associado em {client.created_at ? format(parseISO(client.created_at), 'MMM yyyy') : 'N/A'}
                               </p>

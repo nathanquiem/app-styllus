@@ -385,15 +385,15 @@ export function BookingModal({ isOpen, onClose, onSuccess, userId, empresaId }: 
   const generateTimeSlots = () => {
     const slots = []
     let startHour = 9
-    let endHour = 19
     let startMin = 0
+    let closeTotalMinutes = 19 * 60
 
     if (config?.open_time && config?.close_time) {
        const [openH, openM] = config.open_time.split(':').map(Number)
        const [closeH, closeM] = config.close_time.split(':').map(Number)
        startHour = openH
-       endHour = closeH
        startMin = openM
+       closeTotalMinutes = closeH * 60 + closeM
     }
 
     let cursorH = startHour
@@ -403,12 +403,18 @@ export function BookingModal({ isOpen, onClose, onSuccess, userId, empresaId }: 
     const isToday = date === format(now, 'yyyy-MM-dd')
     const currentTotalMinutes = now.getHours() * 60 + now.getMinutes()
 
-    while (cursorH < endHour || (cursorH === endHour && cursorM === 0)) {
+    while (true) {
+      const slotTotalMinutes = cursorH * 60 + cursorM
+      
+      // Stop generating slots if slot can't finish by closing time (slot = 30 min)
+      if (slotTotalMinutes + 30 > closeTotalMinutes) {
+        break
+      }
+
       const slotStr = `${cursorH.toString().padStart(2, '0')}:${cursorM.toString().padStart(2, '0')}`
       
       let isValidSlot = true
       if (isToday) {
-        const slotTotalMinutes = cursorH * 60 + cursorM
         // Minimum 30 mins from now
         if (slotTotalMinutes < currentTotalMinutes + 30) {
           isValidSlot = false

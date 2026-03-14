@@ -6,7 +6,7 @@ import { Footer } from './Footer'
 import { Button } from './ui/Button'
 import { Input } from './ui/Input'
 import { Label } from './ui/Label'
-import { X, Check } from 'lucide-react'
+import { X, Check, Eye, EyeOff } from 'lucide-react'
 import { maskPhoneInput } from '@/lib/formatPhone'
 
 const EMPRESA_ID = process.env.NEXT_PUBLIC_EMPRESA_ID!
@@ -21,6 +21,7 @@ export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
   const [isLogin, setIsLogin] = useState(true)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showPassword, setShowPassword] = useState(false)
   
   // Form state
   const [email, setEmail] = useState('')
@@ -161,14 +162,24 @@ export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
 
           <div className="space-y-2">
             <Label htmlFor="password">Senha</Label>
-            <Input 
-              id="password" 
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              required
-            />
+            <div className="relative">
+              <Input 
+                id="password" 
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                required
+                className="pr-10"
+              />
+              <button
+                type="button"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white"
+                onClick={() => setShowPassword(!showPassword)}
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
             {isLogin && (
               <div className="flex justify-end mt-1">
                 <a href="/reset-password" className="text-xs font-medium text-red-500 hover:text-red-400">
