@@ -60,6 +60,7 @@ export default function DashboardPage() {
         const { data: config } = await supabase
           .from('business_config')
           .select('cancel_limit_hours')
+          .eq('empresa_id', process.env.NEXT_PUBLIC_EMPRESA_ID!)
           .limit(1)
           .maybeSingle()
         
@@ -74,6 +75,7 @@ export default function DashboardPage() {
             barbers (name)
           `)
           .eq('client_id', user.id)
+          .eq('empresa_id', process.env.NEXT_PUBLIC_EMPRESA_ID!)
           .order('start_time', { ascending: true })
 
         if (userBookings) setBookings(userBookings)

@@ -46,10 +46,12 @@ export default function LandingPage() {
 
   useEffect(() => {
     async function fetchData() {
+      const EMPRESA_ID = process.env.NEXT_PUBLIC_EMPRESA_ID!
       // 1. Fetch business config first (scoped to this deployment's empresa)
       const { data: configData } = await supabase
         .from('business_config')
         .select('*')
+        .eq('empresa_id', EMPRESA_ID)
         .limit(1)
         .single()
 
@@ -60,7 +62,7 @@ export default function LandingPage() {
         const { data: svcData } = await supabase
           .from('services')
           .select('*')
-          .eq('empresa_id', configData.empresa_id)
+          .eq('empresa_id', EMPRESA_ID)
           .order('name')
 
         if (svcData) setServices(svcData)
