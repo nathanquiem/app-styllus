@@ -233,7 +233,7 @@ export default function PainelStyllus() {
         .eq('status', 'confirmed')
         
       if (!error && pastBookings) {
-        const totalSpent = pastBookings.reduce((acc: number, curr: any) => acc + (Number(curr.services?.price) || 0), 0)
+        const totalSpent = pastBookings.reduce((acc: number, curr: any) => acc + (Number(curr.services_styllus?.price) || 0), 0)
         setSelectedClientDetails({
           totalCuts: pastBookings.length || 0,
           registeredSince: booking.profiles.created_at 
@@ -610,6 +610,19 @@ export default function PainelStyllus() {
   const handleConfirmQuickBooking = async () => {
     if (!quickName || !quickServiceId || !quickDate || !quickTime) {
       return alert("Preencha Nome, Serviço, Data e Horário.")
+    }
+
+    // Validate closed days/dates from config
+    if (config) {
+      const [y, m, d] = quickDate.split('-').map(Number)
+      const selectedDay = new Date(y, m - 1, d)
+      const dayOfWeek = selectedDay.getDay()
+      if (config.open_days && !config.open_days.includes(dayOfWeek)) {
+        return alert('A barbearia não abre neste dia da semana. Por favor, selecione outra data.')
+      }
+      if (config.closed_dates && config.closed_dates.includes(quickDate)) {
+        return alert('A barbearia estará fechada nesta data. Por favor, selecione outra data.')
+      }
     }
 
     setIsQuickBooking(true)

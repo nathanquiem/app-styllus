@@ -255,8 +255,7 @@ export function BookingModal({ isOpen, onClose, onSuccess, userId, empresaId }: 
           barber_services_styllus!inner(service_id)
         `)
         .eq('active', true)
-        
-        .eq('barber_services.service_id', serviceId)
+        .eq('barber_services_styllus.service_id', serviceId)
       
       if (error) throw error
 

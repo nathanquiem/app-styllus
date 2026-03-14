@@ -198,16 +198,16 @@ export default function DashboardPage() {
                 <Card key={booking.id} className="border-zinc-800">
                   <CardHeader className="pb-3">
                     <CardTitle className="flex justify-between items-start">
-                      <span>{booking.services?.name}</span>
-                      <span className="text-emerald-500 font-bold">R$ {booking.services?.price}</span>
+                      <span>{booking.services_styllus?.name}</span>
+                      <span className="text-emerald-500 font-bold">R$ {booking.services_styllus?.price}</span>
                     </CardTitle>
                     <CardDescription className="flex items-center gap-4">
                       <span className="flex items-center gap-2">
-                        <Clock className="w-4 h-4" /> {booking.services?.duration_minutes} minutos
+                        <Clock className="w-4 h-4" /> {booking.services_styllus?.duration_minutes} minutos
                       </span>
-                      {booking.barbers?.name && (
+                      {booking.barbers_styllus?.name && (
                         <span className="flex items-center gap-2">
-                          <UserIcon className="w-4 h-4" /> {booking.barbers.name}
+                          <UserIcon className="w-4 h-4" /> {booking.barbers_styllus.name}
                         </span>
                       )}
                     </CardDescription>
@@ -252,7 +252,7 @@ export default function DashboardPage() {
               pastBookings.map(booking => (
                 <div key={booking.id} className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 rounded-lg border border-zinc-800/50 bg-zinc-900/30 gap-4">
                   <div>
-                    <p className="font-medium text-zinc-300">{booking.services?.name}</p>
+                    <p className="font-medium text-zinc-300">{booking.services_styllus?.name}</p>
                     <p className="text-sm text-zinc-500">
                       {format(parseISO(booking.start_time), "dd/MM/yyyy 'às' HH:mm")}
                     </p>
