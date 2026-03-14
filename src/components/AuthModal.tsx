@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase-browser'
@@ -53,7 +53,7 @@ export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
             data: {
               full_name: fullName,
               phone,
-              empresa_id: EMPRESA_ID,
+              
             }
           }
         })
@@ -62,13 +62,13 @@ export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
         // Trigger handle_new_user() automatically creates the profile.
         // Also try direct INSERT as fallback (silent — ignores conflict).
         if (data.user) {
-          await supabase.from('profiles').insert({
+          await supabase.from('profiles_styllus').insert({
             id: data.user.id,
             full_name: fullName,
             phone,
             email,
             role: 'client',
-            empresa_id: EMPRESA_ID
+            
           }).then(() => {})
         }
 

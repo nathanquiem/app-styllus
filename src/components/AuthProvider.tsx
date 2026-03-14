@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import { useEffect } from 'react'
 import { createClient } from '@/lib/supabase-browser'
@@ -25,12 +25,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (session?.user) {
           setUser(session.user)
 
-          // Filter profile by THIS app's empresa_id to prevent cross-tenant data leak
+          
           const { data: prof } = await supabase
-            .from('profiles')
+            .from('profiles_styllus')
             .select('*')
             .eq('id', session.user.id)
-            .eq('empresa_id', EMPRESA_ID)
+            
             .maybeSingle()
 
           if (!cancelled && prof) setProfile(prof)
@@ -62,12 +62,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (session?.user) {
           setUser(session.user)
 
-          // Always filter by this app's empresa_id
+          
           const { data: prof } = await supabase
-            .from('profiles')
+            .from('profiles_styllus')
             .select('*')
             .eq('id', session.user.id)
-            .eq('empresa_id', EMPRESA_ID)
+            
             .maybeSingle()
 
           if (!cancelled && prof) {

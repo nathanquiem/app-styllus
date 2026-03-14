@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase-browser'
@@ -48,19 +48,19 @@ export default function DashboardPage() {
         // Fetch User Profile if not in store
         if (!profile) {
           const { data: prof } = await supabase
-            .from('profiles')
+            .from('profiles_styllus')
             .select('*')
             .eq('id', user.id)
-            .eq('empresa_id', process.env.NEXT_PUBLIC_EMPRESA_ID!)
+            
             .maybeSingle()
           if (prof) setProfile(prof)
         }
 
         // Fetch Business Config for Cancel Limit
         const { data: config } = await supabase
-          .from('business_config')
+          .from('business_config_styllus')
           .select('cancel_limit_hours')
-          .eq('empresa_id', process.env.NEXT_PUBLIC_EMPRESA_ID!)
+          
           .limit(1)
           .maybeSingle()
         
@@ -68,14 +68,14 @@ export default function DashboardPage() {
 
         // Fetch User Bookings with Service Details
         const { data: userBookings } = await supabase
-          .from('bookings')
+          .from('bookings_styllus')
           .select(`
             *,
-            services (name, duration_minutes, price),
-            barbers (name)
+            services_styllus (name, duration_minutes, price),
+            barbers_styllus (name)
           `)
           .eq('client_id', user.id)
-          .eq('empresa_id', process.env.NEXT_PUBLIC_EMPRESA_ID!)
+          
           .order('start_time', { ascending: true })
 
         if (userBookings) setBookings(userBookings)
@@ -106,7 +106,7 @@ export default function DashboardPage() {
     
     try {
       const { error } = await supabase
-        .from('bookings')
+        .from('bookings_styllus')
         .update({ status: 'canceled' })
         .eq('id', bookingId)
 
@@ -325,7 +325,7 @@ export default function DashboardPage() {
                 onClick={async () => {
                   setEditLoading(true)
                   const { error } = await supabase
-                    .from('profiles')
+                    .from('profiles_styllus')
                     .update({ full_name: editName, phone: editPhone })
                     .eq('id', user.id)
                   

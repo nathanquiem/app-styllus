@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/Button'
@@ -49,9 +49,9 @@ export default function LandingPage() {
       const EMPRESA_ID = process.env.NEXT_PUBLIC_EMPRESA_ID!
       // 1. Fetch business config first (scoped to this deployment's empresa)
       const { data: configData } = await supabase
-        .from('business_config')
+        .from('business_config_styllus')
         .select('*')
-        .eq('empresa_id', EMPRESA_ID)
+        
         .limit(1)
         .single()
 
@@ -60,9 +60,9 @@ export default function LandingPage() {
 
         // 2. Only fetch services belonging to this empresa
         const { data: svcData } = await supabase
-          .from('services')
+          .from('services_styllus')
           .select('*')
-          .eq('empresa_id', EMPRESA_ID)
+          
           .order('name')
 
         if (svcData) setServices(svcData)

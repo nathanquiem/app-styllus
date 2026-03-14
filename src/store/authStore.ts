@@ -1,4 +1,4 @@
-import { create } from 'zustand'
+﻿import { create } from 'zustand'
 import { User } from '@supabase/supabase-js'
 
 export interface Profile {
@@ -7,7 +7,7 @@ export interface Profile {
   phone: string | null
   email: string | null
   role: 'admin' | 'client'
-  empresa_id: string
+  
 }
 
 interface AuthState {

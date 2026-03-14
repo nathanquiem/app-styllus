@@ -177,12 +177,12 @@ export default function PainelStyllus() {
       const to = from + 49
 
       const { data, count, error } = await supabase
-        .from('bookings')
+        .from('bookings_styllus')
         .select(`
           *,
-          services (name, price, duration_minutes),
-          profiles:client_id (id, full_name, created_at, phone),
-          barbers (name)
+          services_styllus (name, price, duration_minutes),
+          profiles_styllus:client_id (id, full_name, created_at, phone),
+          barbers_styllus (name)
         `, { count: 'exact' })
         .gte('start_time', startStr)
         .lte('start_time', endStr)
@@ -220,15 +220,15 @@ export default function PainelStyllus() {
        setSelectedClientDetails({
          totalCuts: 'N/A (Walk-in)',
          registeredSince: 'N/A',
-         totalSpent: 'R$ ' + (booking.services?.price || 0)
+         totalSpent: 'R$ ' + (booking.services_styllus?.price || 0)
        })
        return
     }
 
     try {
       const { data: pastBookings, error } = await supabase
-        .from('bookings')
-        .select(`status, services(price)`)
+        .from('bookings_styllus')
+        .select(`status, services_styllus(price)`)
         .eq('client_id', booking.profiles.id)
         .eq('status', 'confirmed')
         
@@ -252,7 +252,7 @@ export default function PainelStyllus() {
     if (!confirm("Tem certeza que deseja cancelar este agendamento?")) return
 
     try {
-      const { error } = await supabase.from('bookings').update({ status: 'canceled' }).eq('id', id)
+      const { error } = await supabase.from('bookings_styllus').update({ status: 'canceled' }).eq('id', id)
       if (error) throw error
       setAgendaBookings(prev => prev.map(b => b.id === id ? { ...b, status: 'canceled' } : b))
       if (selectedBooking?.id === id) setSelectedBooking(null)
@@ -263,12 +263,9 @@ export default function PainelStyllus() {
 
   // --- SERVICES LOGIC ---
   const fetchServices = async () => {
-    const empresaId = profile?.empresa_id
-    if (!empresaId) return
     const { data } = await supabase
-      .from('services')
+      .from('services_styllus')
       .select('*')
-      .eq('empresa_id', empresaId)
       .order('name')
     if (data) setServices(data)
   }
@@ -310,14 +307,14 @@ export default function PainelStyllus() {
         duration_minutes: parseInt(serviceForm.duration, 10),
         description: serviceForm.description,
         image_url: imageUrl,
-        empresa_id: profile?.empresa_id || process.env.NEXT_PUBLIC_EMPRESA_ID!
+        
       }
 
       if (editingServiceId) {
-        const { error } = await supabase.from('services').update(payload).eq('id', editingServiceId)
+        const { error } = await supabase.from('services_styllus').update(payload).eq('id', editingServiceId)
         if (error) throw error
       } else {
-        const { error } = await supabase.from('services').insert(payload)
+        const { error } = await supabase.from('services_styllus').insert(payload)
         if (error) throw error
       }
 
@@ -337,7 +334,7 @@ export default function PainelStyllus() {
   const handleDeleteService = async (id: string) => {
     if (!confirm("Tem certeza que deseja excluir este serviço?")) return
     try {
-      const { error } = await supabase.from('services').delete().eq('id', id)
+      const { error } = await supabase.from('services_styllus').delete().eq('id', id)
       if (error) throw error
       fetchServices()
       alert("Serviço excluído com sucesso!")
@@ -348,12 +345,9 @@ export default function PainelStyllus() {
 
   // --- BARBERS LOGIC ---
   const fetchBarbers = async () => {
-    const empresaId = profile?.empresa_id
-    if (!empresaId) return
     const { data } = await supabase
-      .from('barbers')
-      .select('*, barber_services(service_id)')
-      .eq('empresa_id', empresaId)
+      .from('barbers_styllus')
+      .select('*, barber_services_styllus(service_id)')
       .order('name')
     if (data) setBarbersList(data)
   }
@@ -364,7 +358,7 @@ export default function PainelStyllus() {
     setBarberForm({
       name: barber.name,
       active: barber.active !== false,
-      selectedServices: barber.barber_services?.map((bs: any) => bs.service_id) || [],
+      selectedServices: barber.barber_services_styllus?.map((bs: any) => bs.service_id) || [],
       photo_url: barber.photo_url || ''
     })
     setBarberImageFile(null)
@@ -393,26 +387,26 @@ export default function PainelStyllus() {
         name: barberForm.name, 
         active: barberForm.active,
         photo_url: imageUrl,
-        empresa_id: profile?.empresa_id || process.env.NEXT_PUBLIC_EMPRESA_ID!
+        
       }
       
       let barberId = editingBarberId
 
       if (editingBarberId) {
-        const { error } = await supabase.from('barbers').update(payload).eq('id', editingBarberId)
+        const { error } = await supabase.from('barbers_styllus').update(payload).eq('id', editingBarberId)
         if (error) throw error
       } else {
-        const { data, error } = await supabase.from('barbers').insert(payload).select().single()
+        const { data, error } = await supabase.from('barbers_styllus').insert(payload).select().single()
         if (error) throw error
         barberId = data.id
       }
 
       // Link services
       if (barberId) {
-        await supabase.from('barber_services').delete().eq('barber_id', barberId)
+        await supabase.from('barber_services_styllus').delete().eq('barber_id', barberId)
         if (barberForm.selectedServices.length > 0) {
           const links = barberForm.selectedServices.map(sid => ({ barber_id: barberId, service_id: sid }))
-          await supabase.from('barber_services').insert(links)
+          await supabase.from('barber_services_styllus').insert(links)
         }
       }
 
@@ -431,7 +425,7 @@ export default function PainelStyllus() {
 
   const handleDeleteBarber = async (id: string) => {
     if (!confirm("Apagar barbeiro?")) return
-    await supabase.from('barbers').delete().eq('id', id)
+    await supabase.from('barbers_styllus').delete().eq('id', id)
     fetchBarbers()
   }
 
@@ -448,9 +442,9 @@ export default function PainelStyllus() {
   const fetchConfig = async () => {
     const empresaId = profile?.empresa_id || process.env.NEXT_PUBLIC_EMPRESA_ID!
     const { data } = await supabase
-      .from('business_config')
+      .from('business_config_styllus')
       .select('*')
-      .eq('empresa_id', empresaId)
+      
       .limit(1)
       .single()
     if (data) setConfig(data)
@@ -468,8 +462,8 @@ export default function PainelStyllus() {
       }
       
       if (!config.id) {
-        payload.empresa_id = profile?.empresa_id || process.env.NEXT_PUBLIC_EMPRESA_ID!
-        const { data, error } = await supabase.from('business_config').insert(payload).select().single()
+
+        const { data, error } = await supabase.from('business_config_styllus').insert(payload).select().single()
         if (error) {
           if (error.message.includes('closed_dates')) {
             throw new Error("A coluna 'closed_dates' não existe na tabela 'business_config'. Execute o comando SQL fornecido.")
@@ -478,7 +472,7 @@ export default function PainelStyllus() {
         }
         setConfig(data)
       } else {
-        const { error } = await supabase.from('business_config')
+        const { error } = await supabase.from('business_config_styllus')
           .update(payload)
           .eq('id', config.id)
         if (error) {
@@ -533,7 +527,7 @@ export default function PainelStyllus() {
     const startOfDayStr = new Date(year, month - 1, day, 0, 0, 0).toISOString()
     const endOfDayStr = new Date(year, month - 1, day, 23, 59, 59).toISOString()
 
-    let query = supabase.from('bookings').select('start_time, service_id').gte('start_time', startOfDayStr).lte('start_time', endOfDayStr).neq('status', 'canceled')
+    let query = supabase.from('bookings_styllus').select('start_time, service_id').gte('start_time', startOfDayStr).lte('start_time', endOfDayStr).neq('status', 'canceled')
     if (quickBarberId) query = query.eq('barber_id', quickBarberId)
       
     const { data: bookings } = await query
@@ -543,7 +537,7 @@ export default function PainelStyllus() {
     const durationMap: Record<string, number> = {}
 
     if (serviceIds.length > 0) {
-      const { data: svcData } = await supabase.from('services').select('id, duration_minutes').in('id', serviceIds)
+      const { data: svcData } = await supabase.from('services_styllus').select('id, duration_minutes').in('id', serviceIds)
       if (svcData) svcData.forEach((s: any) => { durationMap[s.id] = s.duration_minutes })
     }
 
@@ -625,7 +619,7 @@ export default function PainelStyllus() {
       const bookingDate = new Date(year, month - 1, day, hours, minutes)
 
       // 1. Fetch Service details to calculate end_time and get names for webhook
-      const { data: svcData } = await supabase.from('services').select('name, duration_minutes').eq('id', quickServiceId).single()
+      const { data: svcData } = await supabase.from('services_styllus').select('name, duration_minutes').eq('id', quickServiceId).single()
       const duration = svcData?.duration_minutes || 30
       const serviceName = svcData?.name || 'Serviço'
       
@@ -636,21 +630,21 @@ export default function PainelStyllus() {
         service_id: quickServiceId,
         start_time: bookingDate.toISOString(),
         end_time: endTime.toISOString(),
-        empresa_id: profile?.empresa_id || process.env.NEXT_PUBLIC_EMPRESA_ID!,
+        
         status: 'confirmed',
         guest_name: quickName,        
         guest_phone: quickPhone || null
       }
       if (quickBarberId) payload.barber_id = quickBarberId
 
-      const { data: newBooking, error } = await supabase.from('bookings').insert(payload).select().single()
+      const { data: newBooking, error } = await supabase.from('bookings_styllus').insert(payload).select().single()
       if (error) throw error
 
       // 2. Dispatch the WhatsApp Webhook if instance is configured
       if (config?.evolution_instance_id && quickPhone) {
         let barberName = 'Barbeiro'
         if (quickBarberId) {
-          const { data: barbData } = await supabase.from('barbers').select('name').eq('id', quickBarberId).single()
+          const { data: barbData } = await supabase.from('barbers_styllus').select('name').eq('id', quickBarberId).single()
           if (barbData) barberName = barbData.name
         }
 
@@ -691,9 +685,9 @@ export default function PainelStyllus() {
     const to = from + 49
     const empresaId = profile?.empresa_id
     
-    let query = supabase.from('profiles').select('*', { count: 'exact' }).order('full_name', { ascending: true })
+    let query = supabase.from('profiles_styllus').select('*', { count: 'exact' }).order('full_name', { ascending: true })
     
-    if (empresaId) query = query.eq('empresa_id', empresaId)
+    if (empresaId) query = query
     if (search) query = query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`)
     
     const { data, count, error } = await query.range(from, to)
@@ -705,18 +699,18 @@ export default function PainelStyllus() {
 
       if (clientIds.length > 0) {
         const { data: bookingStats } = await supabase
-          .from('bookings')
-          .select('client_id, services(price)')
+          .from('bookings_styllus')
+          .select('client_id, services_styllus(price)')
           .in('client_id', clientIds)
           .eq('status', 'confirmed')
-          .eq('empresa_id', empresaId || process.env.NEXT_PUBLIC_EMPRESA_ID!)
+          
 
         if (bookingStats) {
           bookingStats.forEach((b: any) => {
             if (!b.client_id) return
             if (!statsMap[b.client_id]) statsMap[b.client_id] = { bookingCount: 0, totalSpent: 0 }
             statsMap[b.client_id].bookingCount += 1
-            statsMap[b.client_id].totalSpent += Number(b.services?.price) || 0
+            statsMap[b.client_id].totalSpent += Number(b.services_styllus?.price) || 0
           })
         }
       }
@@ -801,8 +795,8 @@ export default function PainelStyllus() {
       const fetchStart = metricCompare ? startOfDay(compStart) : rangeStart
 
       const { data: allBookings, error } = await supabase
-        .from('bookings')
-        .select('start_time, status, service_id, services(name, price)')
+        .from('bookings_styllus')
+        .select('start_time, status, service_id, services_styllus(name, price)')
         .gte('start_time', fetchStart.toISOString())
         .lte('start_time', rangeEnd.toISOString())
 
@@ -825,7 +819,7 @@ export default function PainelStyllus() {
       const compConfirmed = compBookings.filter((b: any) => b.status === 'confirmed')
 
       // KPIs
-      const totalRev = confirmed.reduce((s: number, b: any) => s + (Number(b.services?.price) || 0), 0)
+      const totalRev = confirmed.reduce((s: number, b: any) => s + (Number(b.services_styllus?.price) || 0), 0)
       const totalBookingsCount = confirmed.length
       const canceledCount = canceled.length
       const totalAll = currentBookings.length
@@ -833,7 +827,7 @@ export default function PainelStyllus() {
       const ticketMedio = totalBookingsCount > 0 ? totalRev / totalBookingsCount : 0
 
       // Comparison KPIs
-      const compRev = compConfirmed.reduce((s: number, b: any) => s + (Number(b.services?.price) || 0), 0)
+      const compRev = compConfirmed.reduce((s: number, b: any) => s + (Number(b.services_styllus?.price) || 0), 0)
       const compBookingsCount = compConfirmed.length
       const compTicket = compBookingsCount > 0 ? compRev / compBookingsCount : 0
       const compCancelRate = compBookings.length > 0 ? (compBookings.filter((b: any) => b.status === 'canceled').length / compBookings.length) * 100 : 0
@@ -844,9 +838,9 @@ export default function PainelStyllus() {
       const svcMap: Record<string, { name: string; count: number; revenue: number }> = {}
       confirmed.forEach((b: any) => {
         const key = b.service_id || 'unknown'
-        if (!svcMap[key]) svcMap[key] = { name: b.services?.name || 'Desconhecido', count: 0, revenue: 0 }
+        if (!svcMap[key]) svcMap[key] = { name: b.services_styllus?.name || 'Desconhecido', count: 0, revenue: 0 }
         svcMap[key].count++
-        svcMap[key].revenue += Number(b.services?.price) || 0
+        svcMap[key].revenue += Number(b.services_styllus?.price) || 0
       })
       const topServices = Object.values(svcMap)
         .sort((a, b) => b.revenue - a.revenue)
@@ -859,7 +853,7 @@ export default function PainelStyllus() {
       const days = eachDayOfInterval({ start: rangeStart, end: rangeEnd })
       const dailyData = days.map(day => {
         const dayBookings = confirmed.filter((b: any) => isSameDay(parseISO(b.start_time), day))
-        const revenue = dayBookings.reduce((sum: number, b: any) => sum + (Number(b.services?.price) || 0), 0)
+        const revenue = dayBookings.reduce((sum: number, b: any) => sum + (Number(b.services_styllus?.price) || 0), 0)
         return {
           name: rangeDays <= 14
             ? format(day, 'EEE dd', { locale: ptBR })
@@ -875,7 +869,7 @@ export default function PainelStyllus() {
         ? months.map(month => {
             const monthStr = format(month, 'yyyy-MM')
             const monthBookings = confirmed.filter((b: any) => b.start_time.startsWith(monthStr))
-            const revenue = monthBookings.reduce((sum: number, b: any) => sum + (Number(b.services?.price) || 0), 0)
+            const revenue = monthBookings.reduce((sum: number, b: any) => sum + (Number(b.services_styllus?.price) || 0), 0)
             return {
               name: format(month, 'MMM yy', { locale: ptBR }),
               Receita: revenue,
@@ -918,9 +912,9 @@ export default function PainelStyllus() {
   const getWaConfig = async () => {
     const empresaId = profile?.empresa_id || process.env.NEXT_PUBLIC_EMPRESA_ID!
     const { data } = await supabase
-      .from('business_config')
+      .from('business_config_styllus')
       .select('evolution_instance_id, apikey_id')
-      .eq('empresa_id', empresaId)
+      
       .limit(1)
       .single()
     return data
@@ -1187,11 +1181,11 @@ export default function PainelStyllus() {
                                   </h4>
                                   <div className="text-zinc-400 text-sm flex flex-col gap-1 mt-1">
                                     <span className="flex items-center gap-2">
-                                      <Scissors className="w-3 h-3" /> {booking.services?.name}
+                                      <Scissors className="w-3 h-3" /> {booking.services_styllus?.name}
                                     </span>
-                                    {booking.barbers?.name && (
+                                    {booking.barbers_styllus?.name && (
                                       <span className="flex items-center gap-2 text-xs text-zinc-500">
-                                        <UserIcon className="w-3 h-3" /> {booking.barbers.name}
+                                        <UserIcon className="w-3 h-3" /> {booking.barbers_styllus.name}
                                       </span>
                                     )}
                                   </div>
@@ -1285,7 +1279,7 @@ export default function PainelStyllus() {
                         >
                           <option value="">Selecione...</option>
                           {services
-                            .filter(s => barbersList.some((b: any) => b.active !== false && b.barber_services?.some((bs: any) => bs.service_id === s.id)))
+                            .filter(s => barbersList.some((b: any) => b.active !== false && b.barber_services_styllus?.some((bs: any) => bs.service_id === s.id)))
                             .map(s => <option key={s.id} value={s.id}>{s.name} - R$ {s.price}</option>)}
                         </select>
                       </div>
@@ -1610,7 +1604,7 @@ export default function PainelStyllus() {
                               <span className={`text-xs px-2 py-0.5 rounded-full ${barber.active !== false ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
                                 {barber.active !== false ? 'Ativo' : 'Inativo'}
                               </span>
-                              <span className="text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded-full">{barber.barber_services?.length || 0} Serviços</span>
+                              <span className="text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded-full">{barber.barber_services_styllus?.length || 0} Serviços</span>
                             </div>
                           </div>
                         </div>
