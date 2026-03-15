@@ -542,6 +542,8 @@ export default function PainelStyllus() {
     }
 
     const blocked = new Set<string>()
+    const slotCounts: Record<string, number> = {}
+
     bookings.forEach((b: any) => {
       const start = new Date(b.start_time)
       const duration = durationMap[b.service_id] ?? 30
@@ -551,10 +553,23 @@ export default function PainelStyllus() {
       while (cursor < end) {
         const hh = cursor.getHours().toString().padStart(2, '0')
         const mm = cursor.getMinutes().toString().padStart(2, '0')
-        blocked.add(`${hh}:${mm}`)
+        const timeStr = `${hh}:${mm}`
+        slotCounts[timeStr] = (slotCounts[timeStr] || 0) + 1
         cursor = new Date(cursor.getTime() + 30 * 60 * 1000)
       }
     })
+
+    const capableBarbers = barbersList.filter((b: any) => b.active !== false && (!quickServiceId || b.barber_services_styllus?.some((bs: any) => bs.service_id === quickServiceId)))
+    const limit = capableBarbers.length > 0 ? capableBarbers.length : 1
+
+    Object.keys(slotCounts).forEach(time => {
+      if (quickBarberId) {
+        if (slotCounts[time] >= 1) blocked.add(time)
+      } else {
+        if (slotCounts[time] >= limit) blocked.add(time)
+      }
+    })
+
     setOccupiedSlots(Array.from(blocked))
   }
 
@@ -612,6 +627,18 @@ export default function PainelStyllus() {
       return alert("Preencha Nome, Serviço, Data e Horário.")
     }
 
+    if (config) {
+      const [y, m, d] = quickDate.split('-').map(Number)
+      const selectedDay = new Date(y, m - 1, d)
+      const dayOfWeek = selectedDay.getDay()
+      if (config.open_days && !config.open_days.includes(dayOfWeek)) {
+        return alert('A barbearia não abre neste dia da semana. Por favor, selecione outra data.')
+      }
+      if (config.closed_dates && config.closed_dates.includes(quickDate)) {
+        return alert('A barbearia estará fechada nesta data. Por favor, selecione outra data.')
+      }
+    }
+
     // Validate closed days/dates from config
     if (config) {
       const [y, m, d] = quickDate.split('-').map(Number)
@@ -638,6 +665,26 @@ export default function PainelStyllus() {
       
       const endTime = new Date(bookingDate.getTime() + duration * 60000)
 
+      let finalBarberId = quickBarberId
+      if (!finalBarberId) {
+        const capableBarbers = barbersList.filter((b: any) => b.active !== false && (!quickServiceId || b.barber_services_styllus?.some((bs: any) => bs.service_id === quickServiceId)))
+        
+        const { data: confBookings } = await supabase.from('bookings_styllus')
+           .select('barber_id')
+           .neq('status', 'canceled')
+           .lt('start_time', endTime.toISOString())
+           .gt('end_time', bookingDate.toISOString())
+
+        const busyBarberIds = new Set(confBookings?.map((b: any) => b.barber_id) || [])
+        const availableBarbers = capableBarbers.filter(b => !busyBarberIds.has(b.id))
+        
+        if (availableBarbers.length > 0) {
+           finalBarberId = availableBarbers[Math.floor(Math.random() * availableBarbers.length)].id
+        } else if (capableBarbers.length > 0) {
+           finalBarberId = capableBarbers[0].id
+        }
+      }
+
       const payload: any = {
         client_id: user?.id,
         service_id: quickServiceId,
@@ -648,7 +695,7 @@ export default function PainelStyllus() {
         guest_name: quickName,        
         guest_phone: quickPhone || null
       }
-      if (quickBarberId) payload.barber_id = quickBarberId
+      if (finalBarberId) payload.barber_id = finalBarberId
 
       const { data: newBooking, error } = await supabase.from('bookings_styllus').insert(payload).select().single()
       if (error) throw error
@@ -1331,6 +1378,7 @@ export default function PainelStyllus() {
                                }
                             }
                             setQuickDate(val)
+                            setQuickTime('')
                           }} 
                           className="bg-zinc-900 border-zinc-800" 
                         />
