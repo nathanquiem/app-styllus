@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase-browser'
-import { type AuthChangeEvent } from '@supabase/supabase-js'
+import { AuthChangeEvent, Session } from '@supabase/supabase-js'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Label } from '@/components/ui/Label'
@@ -27,7 +27,7 @@ export default function UpdatePasswordPage() {
     checkHash()
 
     // Listen to changes (when Supabase parses the #access_token from the URL)
-    const { data: authListener } = supabase.auth.onAuthStateChange((event: AuthChangeEvent, session) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
       if (event === 'PASSWORD_RECOVERY') {
         console.log("Password recovery session established");
       }
