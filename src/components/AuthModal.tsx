@@ -62,14 +62,17 @@ export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
         // Trigger handle_new_user() automatically creates the profile.
         // Also try direct INSERT as fallback (silent — ignores conflict).
         if (data.user) {
-          await supabase.from('profiles_styllus').insert({
-            id: data.user.id,
-            full_name: fullName,
-            phone,
-            email: email.trim(),
-            role: 'client',
-            
-          }).catch((e: unknown) => { console.warn('Fallback insert skipped:', (e as Error)?.message) })
+          try {
+            await supabase.from('profiles_styllus').insert({
+              id: data.user.id,
+              full_name: fullName,
+              phone,
+              email: email.trim(),
+              role: 'client',
+            })
+          } catch (insertErr: unknown) {
+            console.warn('Fallback insert skipped:', (insertErr as Error)?.message)
+          }
         }
 
         // If session came back immediately (email confirmation OFF),
