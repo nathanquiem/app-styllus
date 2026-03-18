@@ -69,7 +69,7 @@ export function AuthModal({ isOpen, onClose, onSuccess }: AuthModalProps) {
             email: email.trim(),
             role: 'client',
             
-          }).catch((e) => { console.warn('Fallback insert skipped:', e?.message) })
+          }).catch((e: unknown) => { console.warn('Fallback insert skipped:', (e as Error)?.message) })
         }
 
         // If session came back immediately (email confirmation OFF),
