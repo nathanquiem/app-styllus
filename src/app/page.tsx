@@ -1,4 +1,4 @@
-﻿"use client"
+"use client"
 
 import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/Button'
@@ -187,7 +187,11 @@ export default function LandingPage() {
             ))
           ) : services.length > 0 ? (
             services.map((service) => (
-              <div key={service.id} className="rounded-2xl border border-zinc-800/60 bg-zinc-900/40 p-5 flex flex-col hover:border-zinc-700 transition-colors group">
+              <div
+                key={service.id}
+                className="rounded-2xl border border-zinc-800/60 bg-zinc-900/40 p-5 flex flex-col hover:border-zinc-700 transition-colors group cursor-pointer active:scale-[0.98]"
+                onClick={() => user ? window.location.href = '/dashboard' : setIsAuthModalOpen(true)}
+              >
                 <div className="w-full h-48 rounded-xl mb-5 overflow-hidden bg-zinc-800">
                   <img 
                     src={service.image_url || "https://images.unsplash.com/photo-1593702288056-cccbde8e1215?q=80&w=800&auto=format&fit=crop"} 
