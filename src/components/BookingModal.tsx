@@ -349,12 +349,12 @@ export function BookingModal({ isOpen, onClose, onSuccess, userId, empresaId }: 
       if (bookingError) throw bookingError
 
       // Dispatch the WhatsApp Webhook if instance is configured
-      if (config?.evolution_instance_id && profile?.phone) {
+      if (config?.evolution_instance_id) {
         const webhookPayload = {
           event: "novo_agendamento",
           instanceName: config.evolution_instance_id,
           apikey_id: config.apikey_id,
-          phone: profile.phone,
+          phone: profile?.phone || '',
           clientName: profile?.full_name || 'Cliente',
           serviceName: selectedService.name,
           barberName: selectedBarber ? selectedBarber.name : 'Barbeiro',

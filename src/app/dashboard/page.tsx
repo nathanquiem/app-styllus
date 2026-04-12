@@ -105,12 +105,51 @@ export default function DashboardPage() {
     if(!confirm("Tem certeza que deseja cancelar este agendamento?")) return;
     
     try {
+      // Fetch booking details before canceling to build the webhook payload
+      const { data: bookingData } = await supabase
+        .from('bookings_styllus')
+        .select(`
+          start_time,
+          services_styllus (name),
+          barbers_styllus (name),
+          guest_name,
+          guest_phone
+        `)
+        .eq('id', bookingId)
+        .single()
+
       const { error } = await supabase
         .from('bookings_styllus')
         .update({ status: 'canceled' })
         .eq('id', bookingId)
 
       if (error) throw error
+
+      // Dispatch cancellation webhook if instance is configured
+      const { data: bizConfig } = await supabase
+        .from('business_config_styllus')
+        .select('evolution_instance_id, apikey_id')
+        .limit(1)
+        .single()
+
+      if (bizConfig?.evolution_instance_id && bookingData) {
+        const bookingDate = parseISO(bookingData.start_time)
+        fetch('https://n8n.mundoai.com.br/webhook/novo-agendamento', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            event: "delete_agendamento",
+            instanceName: bizConfig.evolution_instance_id,
+            apikey_id: bizConfig.apikey_id,
+            phone: profile?.phone || bookingData.guest_phone || '',
+            clientName: profile?.full_name || bookingData.guest_name || 'Cliente',
+            serviceName: (bookingData.services_styllus as any)?.name || 'Serviço',
+            barberName: (bookingData.barbers_styllus as any)?.name || 'Barbeiro',
+            bookingDate: format(bookingDate, 'dd/MM/yyyy'),
+            bookingTime: format(bookingDate, 'HH:mm')
+          })
+        }).catch(err => console.error("Erro ao notificar webhook cancelamento:", err))
+      }
 
       setBookings(prev => 
         prev.map(b => b.id === bookingId ? { ...b, status: 'canceled' } : b)

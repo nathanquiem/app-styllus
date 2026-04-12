@@ -254,6 +254,30 @@ export default function PainelStyllus() {
     try {
       const { error } = await supabase.from('bookings_styllus').update({ status: 'canceled' }).eq('id', id)
       if (error) throw error
+
+      // Dispatch cancellation webhook if instance is configured
+      const bookingToCancel = agendaBookings.find((b: any) => b.id === id)
+      if (config?.evolution_instance_id && bookingToCancel) {
+        const bookingDate = parseISO(bookingToCancel.start_time)
+        const clientPhone = bookingToCancel.profiles_styllus?.phone || bookingToCancel.guest_phone || ''
+        const clientName = bookingToCancel.profiles_styllus?.full_name || bookingToCancel.guest_name || 'Cliente'
+        fetch('https://n8n.mundoai.com.br/webhook/novo-agendamento', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            event: "delete_agendamento",
+            instanceName: config.evolution_instance_id,
+            apikey_id: config.apikey_id,
+            phone: clientPhone,
+            clientName: clientName,
+            serviceName: bookingToCancel.services_styllus?.name || 'Servico',
+            barberName: bookingToCancel.barbers_styllus?.name || 'Barbeiro',
+            bookingDate: format(bookingDate, 'dd/MM/yyyy'),
+            bookingTime: format(bookingDate, 'HH:mm')
+          })
+        }).catch((err: any) => console.error("Erro ao notificar webhook cancelamento:", err))
+      }
+
       setAgendaBookings(prev => prev.map(b => b.id === id ? { ...b, status: 'canceled' } : b))
       if (selectedBooking?.id === id) setSelectedBooking(null)
     } catch (err: any) {
